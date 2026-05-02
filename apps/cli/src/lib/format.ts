@@ -88,6 +88,7 @@ export function printStatus(
   staged: StatusEntry[],
   unstaged: StatusEntry[],
   untracked: string[],
+  merge?: { mergeHead: string | null; conflicts: string[] },
 ): void {
   if (branch) {
     console.log(`On branch ${chalk.bold.cyan(branch)}`)
@@ -95,7 +96,24 @@ export function printStatus(
     console.log(chalk.yellow('HEAD detached'))
   }
 
-  if (staged.length === 0 && unstaged.length === 0 && untracked.length === 0) {
+  if (merge?.mergeHead) {
+    console.log(chalk.yellow(`\nYou are currently merging ${merge.mergeHead.slice(0, 7)}.`))
+  }
+
+  if (merge && merge.conflicts.length > 0) {
+    console.log('\nUnmerged paths:')
+    console.log(chalk.dim('  (fix conflicts and run "rekurn add <file>...")'))
+    for (const path of merge.conflicts) {
+      console.log(chalk.red('        both modified: ') + chalk.red(path))
+    }
+  }
+
+  if (
+    staged.length === 0 &&
+    unstaged.length === 0 &&
+    untracked.length === 0 &&
+    (!merge || merge.conflicts.length === 0)
+  ) {
     console.log('\nNothing to commit, working tree clean')
     return
   }

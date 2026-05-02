@@ -7,7 +7,11 @@ export {
   serializeTree,
   hashTree,
   buildTreeFromPaths,
+  flattenTreeEntries,
+  treeEntriesToMap,
   type FlatEntry,
+  type TreeFileEntry,
+  type TreeReader,
 } from './tree.js'
 
 // Commit

@@ -1,7 +1,10 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
-import type { Head, Index, RepoConfig } from '@rekurn/types'
+import { parseBlob, parseCommit, parseTree } from '@rekurn/core'
+import { flattenTreeEntries, treeEntriesToMap } from '@rekurn/core'
+import type { TreeFileEntry } from '@rekurn/core'
+import type { CommitObject, Head, Index, IndexEntry, RepoConfig } from '@rekurn/types'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -109,6 +112,16 @@ export function writeIndex(repoRoot: string, index: Index): void {
   writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf8')
 }
 
+export function isConflictIndexEntry(
+  entry: Index[string],
+): entry is Extract<Index[string], { conflict: true }> {
+  return entry !== undefined && 'conflict' in entry && entry.conflict === true
+}
+
+export function isResolvedIndexEntry(entry: Index[string]): entry is IndexEntry {
+  return entry !== undefined && !isConflictIndexEntry(entry)
+}
+
 // ---------------------------------------------------------------------------
 // Object cache  (.rekurn/objects/cache/<hash[0:2]>/<hash[2:]>)
 // ---------------------------------------------------------------------------
@@ -130,6 +143,79 @@ export function writeObjectToCache(repoRoot: string, hash: string, content: Buff
     // Objects are immutable — skip if already cached
     writeFileSync(p, content)
   }
+}
+
+export function readCommitFromCache(repoRoot: string, hash: string): CommitObject | null {
+  const bytes = readObjectFromCache(repoRoot, hash)
+  if (!bytes) return null
+  try {
+    return parseCommit(bytes)
+  } catch {
+    return null
+  }
+}
+
+export function extractBlobContent(repoRoot: string, blobHash: string): Buffer | null {
+  const bytes = readObjectFromCache(repoRoot, blobHash)
+  if (!bytes) return null
+  try {
+    return parseBlob(bytes).content
+  } catch {
+    return null
+  }
+}
+
+export function flattenCommitTree(
+  repoRoot: string,
+  commitHash: string,
+): Record<string, TreeFileEntry> | null {
+  const commit = readCommitFromCache(repoRoot, commitHash)
+  if (!commit) return null
+
+  const rootTreeBytes = readObjectFromCache(repoRoot, commit.treeHash)
+  if (!rootTreeBytes) return null
+
+  try {
+    const rootTree = parseTree(rootTreeBytes)
+    return treeEntriesToMap(flattenTreeEntries(rootTree, (treeHash) => {
+      const bytes = readObjectFromCache(repoRoot, treeHash)
+      if (!bytes) return null
+      try {
+        return parseTree(bytes)
+      } catch {
+        return null
+      }
+    }))
+  } catch {
+    return null
+  }
+}
+
+export function readMergeHead(repoRoot: string): string | null {
+  const path = join(rekurnDir(repoRoot), 'MERGE_HEAD')
+  if (!existsSync(path)) return null
+  return readFileSync(path, 'utf8').trim() || null
+}
+
+export function writeMergeHead(repoRoot: string, hash: string): void {
+  writeFileSync(join(rekurnDir(repoRoot), 'MERGE_HEAD'), `${hash}\n`, 'utf8')
+}
+
+export function clearMergeState(repoRoot: string): void {
+  for (const name of ['MERGE_HEAD', 'MERGE_MSG']) {
+    const path = join(rekurnDir(repoRoot), name)
+    if (existsSync(path)) rmSync(path)
+  }
+}
+
+export function readMergeMessage(repoRoot: string): string | null {
+  const path = join(rekurnDir(repoRoot), 'MERGE_MSG')
+  if (!existsSync(path)) return null
+  return readFileSync(path, 'utf8').trimEnd()
+}
+
+export function writeMergeMessage(repoRoot: string, message: string): void {
+  writeFileSync(join(rekurnDir(repoRoot), 'MERGE_MSG'), `${message.trimEnd()}\n`, 'utf8')
 }
 
 // ---------------------------------------------------------------------------

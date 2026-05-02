@@ -8,6 +8,7 @@ import {
   readIndex,
   readObjectFromCache,
   resolveHEAD,
+  isResolvedIndexEntry,
 } from '../lib/repo.js'
 import { printDiff } from '../lib/format.js'
 
@@ -22,10 +23,10 @@ export async function diffCommand(options: DiffOptions): Promise<void> {
 
   if (options.staged) {
     // Staged diff: index vs HEAD tree
-    await diffStagedVsHead(repoRoot, index)
+    await diffStagedVsHead(repoRoot, resolvedIndex(index))
   } else {
     // Working tree diff: working files vs index
-    diffWorkingVsIndex(repoRoot, index)
+    diffWorkingVsIndex(repoRoot, resolvedIndex(index))
   }
 }
 
@@ -118,6 +119,16 @@ function diffWorkingVsIndex(
 
 function readBlobContent(repoRoot: string, _relPath: string, hash: string): string {
   return readBlobFromCache(repoRoot, hash)
+}
+
+function resolvedIndex(
+  index: ReturnType<typeof readIndex>,
+): Record<string, { hash: string; mode: string; size: number }> {
+  const resolved: Record<string, { hash: string; mode: string; size: number }> = {}
+  for (const [path, entry] of Object.entries(index)) {
+    if (isResolvedIndexEntry(entry)) resolved[path] = entry
+  }
+  return resolved
 }
 
 function readBlobFromCache(repoRoot: string, hash: string): string {

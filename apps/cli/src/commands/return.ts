@@ -14,6 +14,8 @@ import {
   readObjectFromCache,
   currentBranch,
   resolveToCommitHash,
+  isResolvedIndexEntry,
+  readMergeHead,
 } from '../lib/repo.js'
 
 export interface ReturnOptions {
@@ -28,6 +30,11 @@ export async function returnCommand(
   options: ReturnOptions,
 ): Promise<void> {
   const repoRoot = requireRepoRoot()
+  if (readMergeHead(repoRoot)) {
+    console.error(chalk.red('fatal: cannot return while a merge is in progress'))
+    console.error(chalk.dim('  Resolve and commit the merge before switching commits.'))
+    process.exit(1)
+  }
 
   // -------------------------------------------------------------------------
   // rekurn return -b <new-branch>
@@ -250,6 +257,11 @@ function checkDirtyState(repoRoot: string, currentHeadHash: string | null): bool
   }
 
   for (const [path, entry] of Object.entries(index)) {
+    if (!isResolvedIndexEntry(entry)) {
+      console.error(chalk.red(`error: unresolved conflict in '${path}'`))
+      dirty = true
+      break
+    }
     if (!(path in headTree) || headTree[path] !== entry.hash) {
       console.error(chalk.red(`error: Your staged changes to '${path}' would be overwritten.`))
       dirty = true
@@ -270,6 +282,7 @@ function checkDirtyState(repoRoot: string, currentHeadHash: string | null): bool
   // ----- Unstaged changes (working tree differs from index) ---------------
   if (!dirty) {
     for (const [relPath, entry] of Object.entries(index)) {
+      if (!isResolvedIndexEntry(entry)) continue
       const fullPath = join(repoRoot, relPath)
 
       if (!existsSync(fullPath)) {

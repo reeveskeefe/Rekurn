@@ -39,6 +39,47 @@ export function hashTree(entries: TreeEntry[]): string {
 }
 
 // ---------------------------------------------------------------------------
+// Tree walking helpers
+// ---------------------------------------------------------------------------
+
+export interface TreeFileEntry {
+  path: string
+  hash: string
+  mode: FileMode
+}
+
+export type TreeReader = (treeHash: string) => TreeObject | null
+
+/**
+ * Flatten a nested tree into path-addressed file entries.
+ */
+export function flattenTreeEntries(
+  tree: TreeObject,
+  readTree: TreeReader,
+  prefix = '',
+): TreeFileEntry[] {
+  const files: TreeFileEntry[] = []
+
+  for (const entry of tree.entries) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.mode === '040000') {
+      const child = readTree(entry.hash)
+      if (child) files.push(...flattenTreeEntries(child, readTree, path))
+    } else {
+      files.push({ path, hash: entry.hash, mode: entry.mode })
+    }
+  }
+
+  return files.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+export function treeEntriesToMap(entries: TreeFileEntry[]): Record<string, TreeFileEntry> {
+  const map: Record<string, TreeFileEntry> = {}
+  for (const entry of entries) map[entry.path] = entry
+  return map
+}
+
+// ---------------------------------------------------------------------------
 // Nested tree construction from a flat path list
 // ---------------------------------------------------------------------------
 

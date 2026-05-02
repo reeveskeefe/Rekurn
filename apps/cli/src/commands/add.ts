@@ -7,6 +7,7 @@ import {
   readIndex,
   writeIndex,
   writeObjectToCache,
+  isResolvedIndexEntry,
 } from '../lib/repo.js'
 import { buildIgnoreMatcher } from '../lib/ignore.js'
 
@@ -42,7 +43,7 @@ export async function addCommand(paths: string[]): Promise<void> {
       const existing = index[relPath]
       if (!existing) {
         addedCount++
-      } else if (existing.hash !== blob.hash) {
+      } else if (!isResolvedIndexEntry(existing) || existing.hash !== blob.hash) {
         updatedCount++
       }
 

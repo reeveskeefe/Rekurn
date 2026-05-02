@@ -107,8 +107,18 @@ export const IndexEntrySchema = z.object({
 
 export type IndexEntry = z.infer<typeof IndexEntrySchema>
 
+export const ConflictIndexEntrySchema = z.object({
+  conflict: z.literal(true),
+  mode: z.enum(['100644', '100755']).optional(),
+  baseHash: HashSchema.optional(),
+  oursHash: HashSchema.optional(),
+  theirsHash: HashSchema.optional(),
+})
+
+export type ConflictIndexEntry = z.infer<typeof ConflictIndexEntrySchema>
+
 /** Maps relative file path → IndexEntry */
-export const IndexSchema = z.record(z.string(), IndexEntrySchema)
+export const IndexSchema = z.record(z.string(), z.union([IndexEntrySchema, ConflictIndexEntrySchema]))
 export type Index = z.infer<typeof IndexSchema>
 
 // ---------------------------------------------------------------------------

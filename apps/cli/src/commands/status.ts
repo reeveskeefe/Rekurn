@@ -7,6 +7,9 @@ import {
   readObjectFromCache,
   resolveHEAD,
   currentBranch,
+  isConflictIndexEntry,
+  isResolvedIndexEntry,
+  readMergeHead,
 } from '../lib/repo.js'
 import { buildIgnoreMatcher } from '../lib/ignore.js'
 import { printStatus, type StatusEntry } from '../lib/format.js'
@@ -15,6 +18,9 @@ export async function statusCommand(): Promise<void> {
   const repoRoot = requireRepoRoot()
   const index = readIndex(repoRoot)
   const shouldIgnore = buildIgnoreMatcher(repoRoot)
+  const conflicts = Object.entries(index)
+    .filter(([, entry]) => isConflictIndexEntry(entry))
+    .map(([path]) => path)
 
   // -------------------------------------------------------------------------
   // Build HEAD tree map  (path → hash)
@@ -27,6 +33,7 @@ export async function statusCommand(): Promise<void> {
   const staged: StatusEntry[] = []
 
   for (const [path, entry] of Object.entries(index)) {
+    if (!isResolvedIndexEntry(entry)) continue
     if (!(path in headTree)) {
       staged.push({ path, status: 'added' })
     } else if (headTree[path] !== entry.hash) {
@@ -55,6 +62,8 @@ export async function statusCommand(): Promise<void> {
 
     if (!indexEntry) {
       untracked.push(relPath)
+    } else if (isConflictIndexEntry(indexEntry)) {
+      continue
     } else {
       // Re-hash the file to see if it has changed since staging
       const content = readFileSync(filePath)
@@ -67,6 +76,8 @@ export async function statusCommand(): Promise<void> {
 
   // Files in index but deleted from working tree
   for (const relPath of Object.keys(index)) {
+    const entry = index[relPath]
+    if (!entry || isConflictIndexEntry(entry)) continue
     const fullPath = join(repoRoot, relPath)
     if (!existsSync(fullPath)) {
       unstaged.push({ path: relPath, status: 'deleted' })
@@ -80,7 +91,10 @@ export async function statusCommand(): Promise<void> {
   // Print
   // -------------------------------------------------------------------------
   const branch = currentBranch(repoRoot)
-  printStatus(branch, staged, unstaged, untracked)
+  printStatus(branch, staged, unstaged, untracked, {
+    mergeHead: readMergeHead(repoRoot),
+    conflicts,
+  })
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ import { pushCommand } from './commands/push.js'
 import { pullCommand } from './commands/pull.js'
 import { fetchCommand } from './commands/fetch.js'
 import { cloneCommand } from './commands/clone.js'
+import { mergeCommand } from './commands/merge.js'
+import { rebaseCommand } from './commands/rebase.js'
 
 const program = new Command()
 
@@ -118,8 +120,26 @@ program
   })
 
 stub('switch')
-stub('merge')
-stub('rebase')
+
+// ---------------------------------------------------------------------------
+// rekurn merge
+// ---------------------------------------------------------------------------
+program
+  .command('merge <branch>')
+  .description('Merge another branch or commit into the current branch')
+  .action(async (branch: string) => {
+    await mergeCommand(branch)
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn rebase
+// ---------------------------------------------------------------------------
+program
+  .command('rebase [target]')
+  .description('[stub] Reapply commits on top of another branch')
+  .action(async () => {
+    await rebaseCommand()
+  })
 
 // ---------------------------------------------------------------------------
 // rekurn push

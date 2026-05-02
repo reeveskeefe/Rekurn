@@ -11,6 +11,10 @@ import {
   writeObjectToCache,
   resolveIdentity,
   currentBranch,
+  isConflictIndexEntry,
+  readMergeHead,
+  readMergeMessage,
+  clearMergeState,
 } from '../lib/repo.js'
 
 export interface CommitOptions {
@@ -29,6 +33,16 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     return
   }
 
+  const conflicts = Object.entries(index)
+    .filter(([, entry]) => isConflictIndexEntry(entry))
+    .map(([path]) => path)
+  if (conflicts.length > 0) {
+    console.error(chalk.red('error: cannot commit while merge conflicts remain'))
+    for (const path of conflicts) console.error(chalk.dim(`  ${path}`))
+    console.error(chalk.dim('  Resolve conflicts, then run "rekurn add <file>..." before committing.'))
+    process.exit(1)
+  }
+
   // Resolve identity
   const identity = resolveIdentity(repoRoot)
   if (!identity) {
@@ -41,7 +55,7 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   }
 
   // Require a commit message
-  const message = options.message?.trim()
+  const message = (options.message ?? readMergeMessage(repoRoot) ?? '').trim()
   if (!message) {
     console.error(chalk.red('error: commit message cannot be empty'))
     console.error(chalk.dim('  Use: rekurn commit -m "your message"'))
@@ -49,11 +63,12 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   }
 
   // Build tree from the staging index
-  const flatEntries = Object.entries(index).map(([path, entry]) => ({
-    path,
-    hash: entry.hash,
-    mode: entry.mode,
-  }))
+  const flatEntries = Object.entries(index)
+    .flatMap(([path, entry]) => (
+      isConflictIndexEntry(entry)
+        ? []
+        : [{ path, hash: entry.hash, mode: entry.mode }]
+    ))
 
   const { rootTree, allTrees } = buildTreeFromPaths(flatEntries)
 
@@ -65,6 +80,8 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
   // Determine parent commit(s)
   const parentHash = resolveHEAD(repoRoot)
   const parentHashes = parentHash ? [parentHash] : []
+  const mergeHead = readMergeHead(repoRoot)
+  if (mergeHead && parentHash && mergeHead !== parentHash) parentHashes.push(mergeHead)
 
   // Build commit data
   const now = Math.floor(Date.now() / 1000)
@@ -91,6 +108,7 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
 
   // Clear the staging index (it now mirrors the committed tree)
   writeIndex(repoRoot, {})
+  clearMergeState(repoRoot)
 
   // Print summary
   const branch = currentBranch(repoRoot)
