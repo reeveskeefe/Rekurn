@@ -9,6 +9,10 @@ import {
   currentBranch,
   listBranches,
   rekurnDir,
+  isImmutableRef,
+  removeRefMetadata,
+  readRefMetadata,
+  listTags,
 } from '../lib/repo.js'
 
 export interface BranchOptions {
@@ -36,13 +40,20 @@ export async function branchCommand(
     }
 
     const refPath = join(rekurnDir(repoRoot), 'refs', 'heads', target)
+    const refName = `refs/heads/${target}`
     if (!existsSync(refPath)) {
       console.error(chalk.red(`error: branch '${target}' not found`))
       process.exit(1)
     }
 
-    const hash = readRef(repoRoot, `refs/heads/${target}`) ?? ''
+    if (isImmutableRef(repoRoot, refName)) {
+      console.error(chalk.red(`error: branch '${target}' is immutable and cannot be deleted`))
+      process.exit(1)
+    }
+
+    const hash = readRef(repoRoot, refName) ?? ''
     rmSync(refPath)
+    removeRefMetadata(repoRoot, refName)
     console.log(
       `Deleted branch ${chalk.cyan(target)} (was ${chalk.yellow(hash.slice(0, 7))}).`,
     )
@@ -84,9 +95,11 @@ export async function branchCommand(
   // rekurn branch  — list all branches
   // -------------------------------------------------------------------------
   const branches = listBranches(repoRoot)
+  const tags = listTags(repoRoot)
   const cur = currentBranch(repoRoot)
+  const meta = readRefMetadata(repoRoot)
 
-  if (branches.length === 0) {
+  if (branches.length === 0 && tags.length === 0) {
     console.log(chalk.dim('No branches yet. Make your first commit to create one.'))
     return
   }
@@ -94,12 +107,19 @@ export async function branchCommand(
   for (const branch of branches) {
     const hash = readRef(repoRoot, `refs/heads/${branch}`) ?? ''
     const shortHash = chalk.dim(`[${hash.slice(0, 7)}]`)
+    const immutable = meta[`refs/heads/${branch}`]?.isImmutable ? chalk.magenta(' immutable') : ''
 
     if (branch === cur) {
-      console.log(`${chalk.green('*')} ${chalk.bold.cyan(branch)} ${shortHash}`)
+      console.log(`${chalk.green('*')} ${chalk.bold.cyan(branch)} ${shortHash}${immutable}`)
     } else {
-      console.log(`  ${branch} ${shortHash}`)
+      console.log(`  ${branch} ${shortHash}${immutable}`)
     }
+  }
+
+  for (const tag of tags) {
+    const hash = readRef(repoRoot, `refs/tags/${tag}`) ?? ''
+    const immutable = meta[`refs/tags/${tag}`]?.isImmutable ? chalk.magenta(' immutable snapshot') : ' tag'
+    console.log(`  ${chalk.cyan(`@${tag}`)} ${chalk.dim(`[${hash.slice(0, 7)}]`)}${immutable}`)
   }
 }
 

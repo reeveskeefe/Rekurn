@@ -13,16 +13,19 @@ import {
   resolveHEAD,
   readObjectFromCache,
   currentBranch,
-  resolveToCommitHash,
   isResolvedIndexEntry,
   readMergeHead,
 } from '../lib/repo.js'
+import { resolveAtSelector, resolveSelector } from '../lib/selectors.js'
 
 export interface ReturnOptions {
   /** Create a new branch at the current HEAD and switch to it. */
   newBranch?: string
   /** Discard local changes without confirmation. */
   force?: boolean
+  preview?: boolean
+  at?: string
+  file?: string
 }
 
 export async function returnCommand(
@@ -71,7 +74,7 @@ export async function returnCommand(
   // -------------------------------------------------------------------------
   // Require a target when -b is not given
   // -------------------------------------------------------------------------
-  if (!target) {
+  if (!target && !options.at) {
     console.error(chalk.red('error: specify a branch name, commit hash, or use -b <name>'))
     console.error('')
     console.error(chalk.dim('  Usage:'))
@@ -84,11 +87,18 @@ export async function returnCommand(
   // -------------------------------------------------------------------------
   // Resolve target → full commit hash
   // -------------------------------------------------------------------------
-  const targetHash = resolveToCommitHash(repoRoot, target)
+  const resolved = options.at
+    ? resolveAtSelector(repoRoot, options.at)
+    : resolveSelector(repoRoot, target!)
+  const targetHash = resolved?.hash ?? null
   if (!targetHash) {
-    console.error(chalk.red(`error: '${target}' did not match any branch, tag, or commit`))
+    console.error(chalk.red(`error: '${options.at ?? target}' did not match any branch, tag, time, or commit`))
     console.error(chalk.dim(`  Run "rekurn log" to list commits, or "rekurn branch" to list branches.`))
     process.exit(1)
+  }
+  if (options.file) {
+    restoreSingleFile(repoRoot, targetHash, options.file, options.preview === true)
+    return
   }
 
   // -------------------------------------------------------------------------
@@ -104,6 +114,11 @@ export async function returnCommand(
   }
   if (!isBranchSwitch && currentHeadHash === targetHash) {
     console.log(chalk.yellow(`HEAD is already at ${targetHash.slice(0, 7)}`))
+    return
+  }
+
+  if (options.preview) {
+    previewCheckout(repoRoot, targetHash, currentHeadHash)
     return
   }
 
@@ -225,6 +240,92 @@ export async function returnCommand(
   if (parts.length) {
     console.log(chalk.dim(`  Working tree: ${parts.join(', ')}`))
   }
+}
+
+function previewCheckout(repoRoot: string, targetHash: string, currentHeadHash: string | null): void {
+  const targetCommitBuf = readObjectFromCache(repoRoot, targetHash)
+  if (!targetCommitBuf) {
+    console.error(chalk.red(`fatal: object ${targetHash} not found in local cache`))
+    process.exit(1)
+  }
+  const treeMatch = targetCommitBuf.toString('utf8').match(/tree ([0-9a-f]{64})/)
+  if (!treeMatch) {
+    console.error(chalk.red(`fatal: corrupt commit object ${targetHash.slice(0, 7)}`))
+    process.exit(1)
+  }
+
+  const targetFiles: Record<string, { hash: string; mode: string }> = {}
+  flattenTree(repoRoot, treeMatch[1]!, '', targetFiles)
+
+  const currentFiles: Record<string, { hash: string; mode: string }> = {}
+  if (currentHeadHash) {
+    const currentCommit = readObjectFromCache(repoRoot, currentHeadHash)
+    const currentTree = currentCommit?.toString('utf8').match(/tree ([0-9a-f]{64})/)
+    if (currentTree) flattenTree(repoRoot, currentTree[1]!, '', currentFiles)
+  }
+
+  const paths = new Set([...Object.keys(currentFiles), ...Object.keys(targetFiles)])
+  let added = 0
+  let updated = 0
+  let removed = 0
+  for (const path of paths) {
+    if (!(path in currentFiles)) added++
+    else if (!(path in targetFiles)) removed++
+    else if (currentFiles[path]!.hash !== targetFiles[path]!.hash) updated++
+  }
+
+  console.log(`Would move HEAD to ${chalk.yellow(targetHash.slice(0, 7))}`)
+  console.log(chalk.dim(`  Working tree: ${added} added, ${updated} updated, ${removed} removed`))
+}
+
+function restoreSingleFile(
+  repoRoot: string,
+  targetHash: string,
+  filePath: string,
+  preview: boolean,
+): void {
+  const commitBuf = readObjectFromCache(repoRoot, targetHash)
+  if (!commitBuf) {
+    console.error(chalk.red(`fatal: object ${targetHash} not found in local cache`))
+    process.exit(1)
+  }
+  const treeMatch = commitBuf.toString('utf8').match(/tree ([0-9a-f]{64})/)
+  if (!treeMatch) {
+    console.error(chalk.red(`fatal: corrupt commit object ${targetHash.slice(0, 7)}`))
+    process.exit(1)
+  }
+
+  const files: Record<string, { hash: string; mode: string }> = {}
+  flattenTree(repoRoot, treeMatch[1]!, '', files)
+  const file = files[filePath]
+  if (!file) {
+    console.error(chalk.red(`error: '${filePath}' does not exist at ${targetHash.slice(0, 7)}`))
+    process.exit(1)
+  }
+
+  if (preview) {
+    console.log(`Would restore ${chalk.cyan(filePath)} from ${chalk.yellow(targetHash.slice(0, 7))}`)
+    return
+  }
+
+  const content = extractBlobContent(repoRoot, file.hash)
+  if (content === null) {
+    console.error(chalk.red(`fatal: missing blob ${file.hash.slice(0, 7)} for '${filePath}'`))
+    process.exit(1)
+  }
+
+  const fullPath = join(repoRoot, filePath)
+  mkdirSync(dirname(fullPath), { recursive: true })
+  writeFileSync(fullPath, content)
+
+  const index = readIndex(repoRoot)
+  index[filePath] = {
+    hash: file.hash,
+    mode: (file.mode === '100755' ? '100755' : '100644') as '100644' | '100755',
+    size: statSync(fullPath).size,
+  }
+  writeIndex(repoRoot, index)
+  console.log(`Restored ${chalk.cyan(filePath)} from ${chalk.yellow(targetHash.slice(0, 7))}`)
 }
 
 // ---------------------------------------------------------------------------

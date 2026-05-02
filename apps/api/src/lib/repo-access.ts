@@ -15,6 +15,7 @@ export interface RepoRecord {
   description: string | null
   visibility: 'public' | 'private'
   defaultBranch: string
+  deployHooks: Record<string, string>
   createdAt: Date
 }
 

@@ -163,6 +163,7 @@ export const RepoConfigSchema = z.object({
       defaultBranch: z.string().default('main'),
     })
     .optional(),
+  deployHooks: z.record(z.string(), z.string().url()).optional(),
 })
 
 export type RepoConfig = z.infer<typeof RepoConfigSchema>

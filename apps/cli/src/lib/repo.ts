@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { parseBlob, parseCommit, parseTree } from '@rekurn/core'
 import { flattenTreeEntries, treeEntriesToMap } from '@rekurn/core'
 import type { TreeFileEntry } from '@rekurn/core'
-import type { CommitObject, Head, Index, IndexEntry, RepoConfig } from '@rekurn/types'
+import type { CommitObject, Head, Index, IndexEntry, Ref, RepoConfig } from '@rekurn/types'
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -83,6 +83,38 @@ export function writeRef(repoRoot: string, refName: string, hash: string): void 
   const refPath = join(rekurnDir(repoRoot), refName)
   mkdirSync(dirname(refPath), { recursive: true })
   writeFileSync(refPath, hash + '\n', 'utf8')
+}
+
+export type RefMetadata = Pick<Ref, 'name' | 'commitHash' | 'type' | 'isImmutable'>
+
+export function readRefMetadata(repoRoot: string): Record<string, RefMetadata> {
+  const path = join(rekurnDir(repoRoot), 'refs-meta.json')
+  if (!existsSync(path)) return {}
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, RefMetadata>
+  } catch {
+    return {}
+  }
+}
+
+export function writeRefMetadata(repoRoot: string, refs: Record<string, RefMetadata>): void {
+  writeFileSync(join(rekurnDir(repoRoot), 'refs-meta.json'), JSON.stringify(refs, null, 2), 'utf8')
+}
+
+export function setRefMetadata(repoRoot: string, ref: RefMetadata): void {
+  const refs = readRefMetadata(repoRoot)
+  refs[ref.name] = ref
+  writeRefMetadata(repoRoot, refs)
+}
+
+export function removeRefMetadata(repoRoot: string, refName: string): void {
+  const refs = readRefMetadata(repoRoot)
+  delete refs[refName]
+  writeRefMetadata(repoRoot, refs)
+}
+
+export function isImmutableRef(repoRoot: string, refName: string): boolean {
+  return readRefMetadata(repoRoot)[refName]?.isImmutable === true
 }
 
 /** Get the name of the current branch (e.g. "main"), or null if detached. */
@@ -298,6 +330,14 @@ export function listBranches(repoRoot: string): string[] {
   if (!existsSync(headsDir)) return []
   return readdirSync(headsDir)
     .filter(f => statSync(join(headsDir, f)).isFile())
+    .sort()
+}
+
+export function listTags(repoRoot: string): string[] {
+  const tagsDir = join(rekurnDir(repoRoot), 'refs', 'tags')
+  if (!existsSync(tagsDir)) return []
+  return readdirSync(tagsDir)
+    .filter(f => statSync(join(tagsDir, f)).isFile())
     .sort()
 }
 

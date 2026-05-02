@@ -15,6 +15,12 @@ import { fetchCommand } from './commands/fetch.js'
 import { cloneCommand } from './commands/clone.js'
 import { mergeCommand } from './commands/merge.js'
 import { rebaseCommand } from './commands/rebase.js'
+import { snapshotCommand } from './commands/snapshot.js'
+import { timelineCommand } from './commands/timeline.js'
+import { verifyCommand } from './commands/verify.js'
+import { auditCommand } from './commands/audit.js'
+import { configCommand } from './commands/config.js'
+import { deployCommand, rollbackCommand } from './commands/deploy.js'
 
 const program = new Command()
 
@@ -190,19 +196,85 @@ program
   .description('Switch branches or restore a previous commit')
   .option('-b, --new-branch <name>', 'Create a new branch and switch to it')
   .option('-f, --force', 'Discard local changes without confirmation')
+  .option('--preview', 'Preview the checkout without changing files')
+  .option('--at <time>', 'Return to the first commit at or before a time, e.g. "2 days ago"')
+  .option('--file <path>', 'Restore one file from the target commit')
   .action(async (
     target: string | undefined,
-    options: { newBranch?: string; force?: boolean },
+    options: { newBranch?: string; force?: boolean; preview?: boolean; at?: string; file?: string },
   ) => {
     await returnCommand(target, options)
   })
 
-stub('snapshot')
-stub('deploy')
+// ---------------------------------------------------------------------------
+// rekurn snapshot
+// ---------------------------------------------------------------------------
+program
+  .command('snapshot <name>')
+  .description('Create an immutable snapshot tag at HEAD')
+  .action(async (name: string) => {
+    await snapshotCommand(name)
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn deploy
+// ---------------------------------------------------------------------------
+program
+  .command('deploy [environmentOrRef] [ref]')
+  .description('Trigger a configured deploy hook and record the release')
+  .option('--env <environment>', 'Deployment environment')
+  .option('--notes <notes>', 'Deployment notes')
+  .action(async (
+    environmentOrRef: string | undefined,
+    ref: string | undefined,
+    options: { env?: string; notes?: string },
+  ) => {
+    await deployCommand(environmentOrRef, ref, options)
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn rollback
+// ---------------------------------------------------------------------------
+program
+  .command('rollback <target>')
+  .description('Deploy a previous version again and record it as a rollback')
+  .option('--env <environment>', 'Deployment environment')
+  .option('--notes <notes>', 'Rollback notes')
+  .action(async (target: string, options: { env?: string; notes?: string }) => {
+    await rollbackCommand(target, options)
+  })
+
 stub('remix')
-stub('timeline')
-stub('verify')
-stub('audit')
+
+// ---------------------------------------------------------------------------
+// rekurn timeline
+// ---------------------------------------------------------------------------
+program
+  .command('timeline')
+  .description('Show an ASCII graph of commits and branches')
+  .action(async () => {
+    await timelineCommand()
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn verify
+// ---------------------------------------------------------------------------
+program
+  .command('verify')
+  .description('Verify object hashes, commit chain, and signatures when possible')
+  .action(async () => {
+    await verifyCommand()
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn audit
+// ---------------------------------------------------------------------------
+program
+  .command('audit')
+  .description('Show remote audit log events')
+  .action(async () => {
+    await auditCommand()
+  })
 stub('env')
 stub('pack')
 
@@ -227,6 +299,15 @@ program
   })
 
 stub('remote')
-stub('config')
+
+// ---------------------------------------------------------------------------
+// rekurn config
+// ---------------------------------------------------------------------------
+program
+  .command('config [args...]')
+  .description('Configure Rekurn repository settings')
+  .action(async (args: string[]) => {
+    await configCommand(args)
+  })
 
 program.parseAsync(process.argv)

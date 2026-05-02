@@ -39,3 +39,14 @@ export async function apiPost(
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
 }
+
+export async function apiDelete(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${apiUrl()}${path}`, {
+    ...init,
+    method: 'DELETE',
+    headers: {
+      ...getAuthHeaders(),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
+  })
+}

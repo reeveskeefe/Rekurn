@@ -27,6 +27,7 @@ const HashRegex = /^[0-9a-f]{64}$/
 
 const UpdateRefSchema = z.object({
   commitHash: z.string().regex(HashRegex, 'commitHash must be a 64-char hex string'),
+  isImmutable: z.boolean().optional(),
   /** If provided, only update if current value equals expectedHash. Use null to assert non-existence. */
   expectedHash: z
     .string()
@@ -55,7 +56,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     )
   }
 
-  const { commitHash, expectedHash } = parsed.data
+  const { commitHash, expectedHash, isImmutable } = parsed.data
 
   try {
     const repo = await requireWriteAccess(session.user.id, ownerId, name)
@@ -103,7 +104,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
           name: fullRefName,
           commitHash,
           type,
-          isImmutable: false,
+          isImmutable: isImmutable ?? false,
         })
         .returning()
 

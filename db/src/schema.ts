@@ -117,6 +117,7 @@ export const repos = pgTable(
       .notNull()
       .default('private'),
     defaultBranch: text('default_branch').notNull().default('main'),
+    deployHooks: jsonb('deploy_hooks').$type<Record<string, string>>().notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex('repos_owner_name_idx').on(t.ownerId, t.name)],
@@ -220,6 +221,7 @@ export const deployments = pgTable(
     commitHash: text('commit_hash').notNull(),
     vercelUrl: text('vercel_url'),
     vercelDeploymentId: text('vercel_deployment_id'),
+    notes: text('notes'),
     env: text('env', { enum: ['production', 'preview', 'staging'] })
       .notNull()
       .default('preview'),
