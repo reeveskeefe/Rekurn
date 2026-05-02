@@ -23,6 +23,7 @@ import { configCommand } from './commands/config.js'
 import { deployCommand, rollbackCommand } from './commands/deploy.js'
 import { remoteCommand } from './commands/remote.js'
 import { usernameCommand } from './commands/username.js'
+import { settingsCommand } from './commands/settings.js'
 
 const program = new Command()
 
@@ -284,10 +285,10 @@ stub('pack')
 // rekurn login
 // ---------------------------------------------------------------------------
 program
-  .command('login')
-  .description('Log in to Rekurn (opens browser for magic-link auth)')
-  .action(async () => {
-    await loginCommand()
+  .command('login [url]')
+  .description('Log in to your Rekurn host (e.g. rekurn login https://api.your-site.com)')
+  .action(async (url?: string) => {
+    await loginCommand(url)
   })
 
 // ---------------------------------------------------------------------------
@@ -308,6 +309,16 @@ program
   .description('Show or configure the remote Rekurn API target')
   .action(async (args: string[]) => {
     await remoteCommand(args)
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn settings
+// ---------------------------------------------------------------------------
+program
+  .command('settings')
+  .description('Manage connected Rekurn sites — switch, view, or remove')
+  .action(async () => {
+    await settingsCommand()
   })
 
 // ---------------------------------------------------------------------------

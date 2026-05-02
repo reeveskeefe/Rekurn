@@ -1,32 +1,226 @@
 /**
- * rekurn login
+ * rekurn login [url]
  *
- * Opens a browser window to the Rekurn login page, starts a local HTTP server
- * to receive the OAuth-style callback, and saves the session token to disk.
+ * Two-mode flow:
  *
- * Flow:
+ * FIRST-TIME (no URL configured anywhere):
+ *   Opens a local setup wizard in the browser that explains how Rekurn works
+ *   and lets the user enter their API URL. Once submitted the normal auth
+ *   flow begins immediately — no second command needed.
+ *
+ * RETURNING (URL known via arg, env var, or saved credentials):
+ *   Goes straight to the API host's /auth/cli-login page.
+ *
+ * Auth flow (both modes):
  *   1. Generate a random `state` token (CSRF protection).
  *   2. Start a temporary HTTP server on a random available port.
  *   3. Open the browser to /auth/cli-login?callback=...&state=...
  *   4. User enters email → receives magic link → clicks it.
- *   5. API redirects browser to http://localhost:<PORT>/callback?token=...&state=...
+ *   5. API redirects browser to http://127.0.0.1:<PORT>/callback?token=...&state=...
  *   6. CLI validates state, saves credentials, prints success.
  */
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
 import chalk from 'chalk'
-import { saveCredentials } from '../lib/credentials.js'
+import { saveCredentials, loadCredentials } from '../lib/credentials.js'
 
-const LOGIN_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+const LOGIN_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes (setup wizard needs more time)
 
-function apiUrl(): string {
-  return (process.env.REKURN_API_URL ?? 'https://api.rekurn.com').replace(/\/$/, '')
+// ---------------------------------------------------------------------------
+// Setup wizard HTML — shown when no API URL is configured
+// ---------------------------------------------------------------------------
+function setupPage(port: number): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rekurn — First-time setup</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0d0d10; color: #e2e8f0;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #13131a; border: 1px solid #2a2a3a; border-radius: 16px;
+      padding: 48px 40px; max-width: 560px; width: 100%;
+    }
+    .logo { font-size: 1.75rem; font-weight: 700; color: #4ade80; letter-spacing: -0.5px; margin-bottom: 8px; }
+    .tagline { color: #6b7280; font-size: 0.95rem; margin-bottom: 36px; }
+    h2 { font-size: 1.1rem; font-weight: 600; color: #a78bfa; margin-bottom: 16px; }
+    .steps { list-style: none; margin-bottom: 36px; display: flex; flex-direction: column; gap: 12px; }
+    .steps li {
+      display: flex; gap: 14px; align-items: flex-start;
+      background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 10px; padding: 14px 16px;
+    }
+    .step-num {
+      flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+      background: #4ade8022; border: 1px solid #4ade8055;
+      color: #4ade80; font-size: 0.8rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .step-body { font-size: 0.9rem; color: #cbd5e1; line-height: 1.5; }
+    .step-body strong { color: #f1f5f9; }
+    code {
+      background: #0d0d10; border: 1px solid #2a2a3a; border-radius: 4px;
+      padding: 1px 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85em;
+      color: #86efac;
+    }
+    .divider { border: none; border-top: 1px solid #2a2a3a; margin: 32px 0; }
+    label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 8px; font-weight: 500; }
+    .input-row { display: flex; gap: 10px; }
+    input[type="url"] {
+      flex: 1; background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 8px;
+      color: #f1f5f9; padding: 10px 14px; font-size: 0.95rem; outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="url"]:focus { border-color: #4ade80; }
+    button {
+      background: #4ade80; color: #0d1a10; font-weight: 700; border: none;
+      border-radius: 8px; padding: 10px 20px; font-size: 0.95rem; cursor: pointer;
+      transition: background 0.15s; white-space: nowrap;
+    }
+    button:hover { background: #86efac; }
+    .hint { margin-top: 10px; font-size: 0.8rem; color: #4b5563; }
+    #error { color: #f87171; font-size: 0.85rem; margin-top: 10px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">rekurn</div>
+    <div class="tagline">Return to any version instantly — self-hosted version control.</div>
+
+    <h2>Connect to a Rekurn site</h2>
+    <ol class="steps">
+      <li>
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <strong>Rekurn is self-hosted.</strong> Each site running Rekurn has its own API URL.
+          You log in there with your account on that site — not with any central rekurn.com account.
+        </div>
+      </li>
+      <li>
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <strong>Each site you connect to is independent.</strong> Your repos live on that site's
+          server. You can connect to as many Rekurn sites as you like and switch between them
+          using <code>rekurn settings</code>.
+        </div>
+      </li>
+      <li>
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <strong>Want to host your own?</strong> Deploy the open-source
+          <code>apps/api</code> Next.js app (Vercel, Railway, or any Node host), then enter
+          your URL below. Everyone on your team logs in through the same URL.
+        </div>
+      </li>
+      <li>
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <strong>Already have a site URL?</strong> Just paste it below and click Continue.
+          Your browser will open that site's login page automatically.
+        </div>
+      </li>
+    </ol>
+
+    <hr class="divider" />
+
+    <form id="setup-form">
+      <label for="api-url">Rekurn site URL</label>
+      <div class="input-row">
+        <input
+          type="url"
+          id="api-url"
+          name="apiUrl"
+          placeholder="https://api.your-site.com"
+          required
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit">Connect →</button>
+      </div>
+      <div class="hint">The URL of any site running the Rekurn API. You can add more sites later with <code>rekurn settings</code>.</div>
+      <div id="error"></div>
+    </form>
+  </div>
+
+  <script>
+    document.getElementById('setup-form').addEventListener('submit', async function(e) {
+      e.preventDefault()
+      const url = document.getElementById('api-url').value.trim().replace(/\\/$/, '')
+      const errEl = document.getElementById('error')
+      errEl.style.display = 'none'
+      if (!url.startsWith('http')) {
+        errEl.textContent = 'Please enter a full URL starting with https://'
+        errEl.style.display = 'block'
+        return
+      }
+      try {
+        const res = await fetch('http://127.0.0.1:${port}/configure', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiUrl: url })
+        })
+        const data = await res.json()
+        if (data.loginUrl) {
+          window.location.href = data.loginUrl
+        } else {
+          errEl.textContent = data.error ?? 'Something went wrong'
+          errEl.style.display = 'block'
+        }
+      } catch {
+        errEl.textContent = 'Could not reach the local CLI server. Is the terminal still open?'
+        errEl.style.display = 'block'
+      }
+    })
+  </script>
+</body>
+</html>`
 }
 
-export async function loginCommand(): Promise<void> {
+// ---------------------------------------------------------------------------
+// Shared HTML pages
+// ---------------------------------------------------------------------------
+const SUCCESS_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Rekurn — Login successful</title>
+  <style>
+    body { font-family: sans-serif; background: #0d0d10; color: #4ade80;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #0f2a1e; border: 1px solid #1a5c38; border-radius: 12px;
+            padding: 40px 36px; max-width: 360px; text-align: center; }
+    h2 { margin-bottom: 12px; }
+    p { color: #aaa; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Login successful!</h2>
+    <p>You can close this tab and return to your terminal.</p>
+  </div>
+</body>
+</html>`
+
+// ---------------------------------------------------------------------------
+// Main command
+// ---------------------------------------------------------------------------
+export async function loginCommand(urlArg?: string): Promise<void> {
+  // Resolve the API URL: explicit arg > env var > previously saved credentials
+  const knownUrl = (
+    urlArg ??
+    process.env.REKURN_API_URL ??
+    loadCredentials()?.apiUrl
+  )
+
   const state = randomBytes(32).toString('hex')
 
-  // Start local callback server on a random available port (bind port 0)
+  // Start local server on a random available port
   const server = http.createServer()
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
@@ -35,26 +229,102 @@ export async function loginCommand(): Promise<void> {
     process.exit(1)
   }
   const port = address.port
-
   const callbackBase = `http://127.0.0.1:${port}/callback`
-  const loginUrl = `${apiUrl()}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
 
-  // Open the browser — use the `open` package dynamically to avoid ESM issues
-  console.log(chalk.cyan('Opening browser for login…'))
-  console.log(chalk.dim(`If your browser did not open, visit:\n  ${loginUrl}`))
+  // ---------------------------------------------------------------------------
+  // If no URL known → show setup wizard, wait for /configure POST
+  // ---------------------------------------------------------------------------
+  let apiUrl: string
 
-  try {
-    const { default: open } = await import('open')
-    await open(loginUrl)
-  } catch {
-    // open failed — user has the fallback URL printed above
+  if (!knownUrl) {
+    const setupUrl = `http://127.0.0.1:${port}/setup`
+    console.log(chalk.cyan('\nWelcome to Rekurn!'))
+    console.log(chalk.dim('Opening setup wizard in your browser…'))
+    console.log(chalk.dim(`If it did not open: ${setupUrl}\n`))
+
+    try {
+      const { default: open } = await import('open')
+      await open(setupUrl)
+    } catch { /* user has the fallback URL */ }
+
+    // Wait for the user to submit the setup form
+    apiUrl = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        server.close()
+        reject(new Error('Setup timed out after 10 minutes'))
+      }, LOGIN_TIMEOUT_MS)
+
+      server.on('request', (req, res) => {
+        const reqUrl = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
+
+        if (req.method === 'GET' && reqUrl.pathname === '/setup') {
+          res.writeHead(200, { 'Content-Type': 'text/html' }).end(setupPage(port))
+          return
+        }
+
+        if (req.method === 'POST' && reqUrl.pathname === '/configure') {
+          let body = ''
+          req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+          req.on('end', () => {
+            try {
+              const { apiUrl: submitted } = JSON.parse(body) as { apiUrl?: string }
+              if (!submitted || !submitted.startsWith('http')) {
+                res.writeHead(422, { 'Content-Type': 'application/json' })
+                  .end(JSON.stringify({ error: 'Invalid URL' }))
+                return
+              }
+              const cleanUrl = submitted.replace(/\/$/, '')
+              const loginUrl = `${cleanUrl}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+                .end(JSON.stringify({ loginUrl }))
+
+              // Remove setup listener; re-register callback listener below
+              server.removeAllListeners('request')
+              clearTimeout(timer)
+              resolve(cleanUrl)
+            } catch {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+                .end(JSON.stringify({ error: 'Bad request' }))
+            }
+          })
+          return
+        }
+
+        res.writeHead(404).end()
+      })
+    })
+
+    console.log(chalk.dim(`API URL configured: ${apiUrl}`))
+    console.log(chalk.cyan('Opening login page…'))
+  } else {
+    apiUrl = knownUrl.replace(/\/$/, '')
+    const loginUrl = `${apiUrl}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
+    console.log(chalk.cyan('Opening browser for login…'))
+    console.log(chalk.dim(`If your browser did not open, visit:\n  ${loginUrl}`))
+    try {
+      const { default: open } = await import('open')
+      await open(loginUrl)
+    } catch { /* user has the fallback URL */ }
   }
 
-  // Wait for callback
+  // ---------------------------------------------------------------------------
+  // Wait for the auth callback
+  // ---------------------------------------------------------------------------
+  const loginUrl = `${apiUrl}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
+
+  // If we just came from the setup wizard, open the login URL now
+  if (!knownUrl) {
+    try {
+      const { default: open } = await import('open')
+      await open(loginUrl)
+    } catch { /* user has the fallback URL */ }
+    console.log(chalk.dim(`If your browser did not open:\n  ${loginUrl}\n`))
+  }
+
   const token = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
       server.close()
-      reject(new Error('Login timed out after 5 minutes'))
+      reject(new Error('Login timed out after 10 minutes'))
     }, LOGIN_TIMEOUT_MS)
 
     server.on('request', (req, res) => {
@@ -69,43 +339,18 @@ export async function loginCommand(): Promise<void> {
         const receivedToken = reqUrl.searchParams.get('token') ?? ''
 
         if (receivedState !== state) {
-          res.writeHead(400, { 'Content-Type': 'text/html' }).end(
-            '<p>Invalid state parameter. Please try logging in again.</p>',
-          )
+          res.writeHead(400, { 'Content-Type': 'text/html' })
+            .end('<p>Invalid state. Please try again.</p>')
           return
         }
 
         if (!receivedToken) {
-          res.writeHead(400, { 'Content-Type': 'text/html' }).end(
-            '<p>No token received. Please try logging in again.</p>',
-          )
+          res.writeHead(400, { 'Content-Type': 'text/html' })
+            .end('<p>No token received. Please try again.</p>')
           return
         }
 
-        // Send a success page before closing
-        res.writeHead(200, { 'Content-Type': 'text/html' }).end(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Rekurn — Login successful</title>
-  <style>
-    body { font-family: sans-serif; background: #0d0d10; color: #4ade80;
-           display: flex; align-items: center; justify-content: center;
-           min-height: 100vh; }
-    .card { background: #0f2a1e; border: 1px solid #1a5c38; border-radius: 12px;
-            padding: 40px 36px; max-width: 360px; text-align: center; }
-    h2 { margin-bottom: 12px; }
-    p { color: #aaa; font-size: 0.9rem; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>Login successful!</h2>
-    <p>You can close this tab and return to your terminal.</p>
-  </div>
-</body>
-</html>`)
-
+        res.writeHead(200, { 'Content-Type': 'text/html' }).end(SUCCESS_PAGE)
         clearTimeout(timer)
         server.close()
         resolve(receivedToken)
@@ -121,7 +366,7 @@ export async function loginCommand(): Promise<void> {
   let email = 'unknown'
   let userId = ''
   try {
-    const res = await fetch(`${apiUrl()}/api/auth/get-session`, {
+    const res = await fetch(`${apiUrl}/api/auth/get-session`, {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (res.ok) {
@@ -140,7 +385,7 @@ export async function loginCommand(): Promise<void> {
     token,
     email,
     userId,
-    apiUrl: apiUrl(),
+    apiUrl,
     savedAt: new Date().toISOString(),
   })
 

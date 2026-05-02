@@ -4,12 +4,16 @@
  * Reads REKURN_API_URL from the environment (defaults to https://api.rekurn.com).
  * Attaches Authorization: Bearer <token> when credentials are saved locally.
  */
-import { getAuthHeaders } from './credentials.js'
-
-const DEFAULT_API_URL = 'https://api.rekurn.com'
+import { getAuthHeaders, loadCredentials } from './credentials.js'
 
 function apiUrl(): string {
-  return (process.env.REKURN_API_URL ?? DEFAULT_API_URL).replace(/\/$/, '')
+  // Priority: explicit env var > saved credentials > error
+  const url = process.env.REKURN_API_URL ?? loadCredentials()?.apiUrl
+  if (!url) {
+    console.error('No Rekurn API URL configured. Run: rekurn login https://api.your-site.com')
+    process.exit(1)
+  }
+  return url.replace(/\/$/, '')
 }
 
 export async function apiGet(path: string, init?: RequestInit): Promise<Response> {
