@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+build/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+
+# Test coverage
+coverage/
+
+# Turbo cache
+.turbo/
+
+# Vercel
+.vercel/
+
+# Rekurn local state
+.rekurn/
+
+# TypeScript build info
+*.tsbuildinfo
