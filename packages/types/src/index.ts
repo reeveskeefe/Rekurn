@@ -179,6 +179,40 @@ export const ApiErrorSchema = z.object({
 
 export type ApiError = z.infer<typeof ApiErrorSchema>
 
+export interface RepoSummary {
+  name: string
+  description: string | null
+  visibility: 'public' | 'private'
+  defaultBranch: string
+  deployHooks?: Record<string, string>
+  createdAt: string | Date
+}
+
+export interface DeploymentRecord {
+  commitHash: string
+  env: DeployEnv
+  status: DeployStatus
+  vercelUrl?: string | null
+  vercelDeploymentId?: string | null
+  notes?: string | null
+  createdAt: string | Date
+}
+
+export interface ObjectDownload {
+  hash: string
+  type: 'blob' | 'tree' | 'commit'
+  size: number
+  data: string
+}
+
+export interface AuditEvent {
+  action: string
+  meta: unknown
+  ip: string | null
+  createdAt: string | Date
+  userId: string | null
+}
+
 export function apiOk<T>(data: T): { ok: true; data: T } {
   return { ok: true, data }
 }

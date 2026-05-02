@@ -1,113 +1,25 @@
-import type { CommitObject, TreeObject, Ref } from '@rekurn/types'
-
-// ---------------------------------------------------------------------------
-// Client configuration
-// ---------------------------------------------------------------------------
+import type {
+  AuditEvent,
+  CommitObject,
+  DeploymentRecord,
+  ObjectDownload,
+  Ref,
+  RepoSummary,
+} from '@rekurn/types'
 
 export interface RekurnClientOptions {
-  /** Base URL of the Rekurn API, e.g. "https://oreulius.com" */
+  /** Base URL of the Rekurn API origin, e.g. "https://api.rekurn.com". */
   baseUrl: string
-  /**
-   * Bearer token for authentication.
-   * Obtain via rekurn login → JWT, or by creating an API key.
-   */
+  /** Bearer token. Keep this in memory or a platform secret store, not source code. */
   token?: string
-  /** Custom fetch implementation (defaults to global fetch). */
+  /** Request timeout in milliseconds. Defaults to 10 seconds. */
+  timeoutMs?: number
+  /** Retry count for transient failures. Defaults to 2. */
+  retries?: number
+  /** Custom fetch implementation. Defaults to global fetch. */
   fetch?: typeof globalThis.fetch
-}
-
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
-export class RekurnApiError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: string | undefined,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'RekurnApiError'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Core client
-// ---------------------------------------------------------------------------
-
-export class RekurnClient {
-  private readonly baseUrl: string
-  private token: string | undefined
-  private readonly _fetch: typeof globalThis.fetch
-
-  /** Sub-namespaces for grouping related methods. */
-  readonly repos: ReposMethods
-  readonly commits: CommitsMethods
-  readonly refs: RefsMethods
-  readonly objects: ObjectsMethods
-
-  constructor(options: RekurnClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/$/, '')
-    this.token = options.token
-    this._fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
-    this.repos = new ReposMethods(this)
-    this.commits = new CommitsMethods(this)
-    this.refs = new RefsMethods(this)
-    this.objects = new ObjectsMethods(this)
-  }
-
-  /** Update the auth token (e.g. after a token refresh). */
-  setToken(token: string): void {
-    this.token = token
-  }
-
-  /** Internal: make an authenticated JSON request. */
-  async request<T = unknown>(
-    method: string,
-    path: string,
-    body?: unknown,
-  ): Promise<T> {
-    const url = `${this.baseUrl}/api/v1${path}`
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    }
-    if (this.token) headers['Authorization'] = `Bearer ${this.token}`
-
-    const res = await this._fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    })
-
-    if (!res.ok) {
-      let errorMessage = `HTTP ${res.status}`
-      let code: string | undefined
-      try {
-        const json = (await res.json()) as { error?: string; code?: string }
-        errorMessage = json.error ?? errorMessage
-        code = json.code
-      } catch {
-        // ignore JSON parse failure
-      }
-      throw new RekurnApiError(res.status, code, errorMessage)
-    }
-
-    return res.json() as Promise<T>
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Repos
-// ---------------------------------------------------------------------------
-
-export interface RepoSummary {
-  id: string
-  name: string
-  description: string | null
-  visibility: 'public' | 'private'
-  defaultBranch: string
-  createdAt: string
+  /** Allow http:// for local development. Never enable this in production. */
+  allowInsecureHttp?: boolean
 }
 
 export interface CreateRepoInput {
@@ -117,92 +29,203 @@ export interface CreateRepoInput {
   defaultBranch?: string
 }
 
-class ReposMethods {
-  constructor(private readonly client: RekurnClient) {}
-
-  list(): Promise<RepoSummary[]> {
-    return this.client.request('GET', '/repos')
-  }
-
-  get(repoName: string): Promise<RepoSummary> {
-    return this.client.request('GET', `/${repoName}`)
-  }
-
-  create(input: CreateRepoInput): Promise<RepoSummary> {
-    return this.client.request('POST', '/repos', input)
-  }
-
-  delete(repoName: string): Promise<void> {
-    return this.client.request('DELETE', `/${repoName}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Commits
-// ---------------------------------------------------------------------------
-
 export interface CommitListOptions {
-  ref?: string
   n?: number
-  before?: string
 }
 
-class CommitsMethods {
-  constructor(private readonly client: RekurnClient) {}
-
-  list(repoName: string, options: CommitListOptions = {}): Promise<CommitObject[]> {
-    const params = new URLSearchParams()
-    if (options.ref) params.set('ref', options.ref)
-    if (options.n) params.set('n', String(options.n))
-    if (options.before) params.set('before', options.before)
-    const qs = params.toString() ? `?${params.toString()}` : ''
-    return this.client.request('GET', `/${repoName}/commits${qs}`)
-  }
-
-  get(repoName: string, hash: string): Promise<CommitObject> {
-    return this.client.request('GET', `/${repoName}/commits/${hash}`)
-  }
+export interface UpdateRefInput {
+  commitHash: string
+  expectedHash?: string | null
+  isImmutable?: boolean
 }
-
-// ---------------------------------------------------------------------------
-// Refs
-// ---------------------------------------------------------------------------
-
-class RefsMethods {
-  constructor(private readonly client: RekurnClient) {}
-
-  list(repoName: string): Promise<Ref[]> {
-    return this.client.request('GET', `/${repoName}/refs`)
-  }
-
-  update(repoName: string, refName: string, commitHash: string): Promise<Ref> {
-    return this.client.request('PUT', `/${repoName}/refs/${refName}`, { commitHash })
-  }
-
-  delete(repoName: string, refName: string): Promise<void> {
-    return this.client.request('DELETE', `/${repoName}/refs/${refName}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Objects
-// ---------------------------------------------------------------------------
 
 export interface WantResponse {
-  /** Hashes the server needs — client should upload these. */
   missing: string[]
 }
 
-class ObjectsMethods {
-  constructor(private readonly client: RekurnClient) {}
+export interface DeployHooksResponse {
+  deployHooks: Record<string, string>
+}
 
-  /** Ask the server which of the provided hashes it is missing. */
-  want(repoName: string, hashes: string[]): Promise<WantResponse> {
-    return this.client.request('POST', `/${repoName}/objects/want`, { hashes })
+export interface CreateDeploymentInput {
+  commitHash: string
+  env: 'production' | 'preview' | 'staging'
+  status?: 'pending' | 'building' | 'ready' | 'error' | 'cancelled'
+  externalDeploymentId?: string
+  externalUrl?: string
+  notes?: string
+}
+
+export class RekurnApiError extends Error {
+  readonly status: number
+  readonly code: string | undefined
+
+  constructor(status: number, code: string | undefined, message: string) {
+    super(message)
+    this.name = 'RekurnApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+export class RekurnClient {
+  private readonly baseUrl: string
+  private readonly timeoutMs: number
+  private readonly retries: number
+  private readonly fetchImpl: typeof globalThis.fetch
+  private token: string | undefined
+
+  constructor(options: RekurnClientOptions) {
+    const url = new URL(options.baseUrl)
+    if (url.protocol !== 'https:' && !(options.allowInsecureHttp && url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+      throw new Error('RekurnClient requires HTTPS baseUrl unless allowInsecureHttp is enabled for localhost')
+    }
+
+    this.baseUrl = options.baseUrl.replace(/\/$/, '')
+    this.token = options.token
+    this.timeoutMs = options.timeoutMs ?? 10_000
+    this.retries = options.retries ?? 2
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
 
-  /** Get the tree contents for a given hash. */
-  getTree(repoName: string, hash: string): Promise<TreeObject> {
-    return this.client.request('GET', `/${repoName}/tree/${hash}`)
+  setToken(token: string | undefined): void {
+    this.token = token
   }
+
+  repos = {
+    list: (): Promise<RepoSummary[]> => this.request('GET', '/repos'),
+    create: (input: CreateRepoInput): Promise<RepoSummary> => this.request('POST', '/repos', input),
+    get: (ownerId: string, name: string): Promise<RepoSummary> => this.request('GET', `/repos/${enc(ownerId)}/${enc(name)}`),
+    delete: (ownerId: string, name: string): Promise<{ ok: true }> => this.request('DELETE', `/repos/${enc(ownerId)}/${enc(name)}`),
+  }
+
+  refs = {
+    list: (ownerId: string, repo: string): Promise<{ refs: Ref[] }> => this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/refs`),
+    update: (ownerId: string, repo: string, refName: string, input: UpdateRefInput): Promise<Ref> => (
+      this.request('PUT', `/repos/${enc(ownerId)}/${enc(repo)}/refs/${path(refName)}`, input)
+    ),
+    delete: (ownerId: string, repo: string, refName: string): Promise<{ ok: true }> => (
+      this.request('DELETE', `/repos/${enc(ownerId)}/${enc(repo)}/refs/${path(refName)}`)
+    ),
+  }
+
+  commits = {
+    list: (ownerId: string, repo: string, options: CommitListOptions = {}): Promise<{ commits: CommitObject[] }> => {
+      const query = new URLSearchParams()
+      if (options.n) query.set('n', String(options.n))
+      const suffix = query.size ? `?${query.toString()}` : ''
+      return this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/commits${suffix}`)
+    },
+    get: (ownerId: string, repo: string, hash: string): Promise<CommitObject> => (
+      this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/commits/${enc(hash)}`)
+    ),
+  }
+
+  objects = {
+    want: (ownerId: string, repo: string, hashes: string[]): Promise<WantResponse> => (
+      this.request('POST', `/repos/${enc(ownerId)}/${enc(repo)}/objects/want`, { hashes })
+    ),
+    upload: (ownerId: string, repo: string, hash: string, data: string): Promise<{ ok: true }> => (
+      this.request('POST', `/repos/${enc(ownerId)}/${enc(repo)}/objects/upload`, { hash, data })
+    ),
+    download: (ownerId: string, repo: string, hash: string): Promise<ObjectDownload> => (
+      this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/objects/${enc(hash)}`)
+    ),
+    downloadStream: async (ownerId: string, repo: string, hash: string): Promise<ReadableStream<Uint8Array> | null> => {
+      const res = await this.raw('GET', `/repos/${enc(ownerId)}/${enc(repo)}/objects/${enc(hash)}`)
+      return res.body
+    },
+  }
+
+  deploy = {
+    getHooks: (ownerId: string, repo: string): Promise<DeployHooksResponse> => this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/deploy-hooks`),
+    setHooks: (ownerId: string, repo: string, deployHooks: Record<string, string>): Promise<DeployHooksResponse> => (
+      this.request('PUT', `/repos/${enc(ownerId)}/${enc(repo)}/deploy-hooks`, { deployHooks })
+    ),
+    list: (ownerId: string, repo: string): Promise<DeploymentRecord[]> => this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/deployments`),
+    record: (ownerId: string, repo: string, input: CreateDeploymentInput): Promise<DeploymentRecord> => (
+      this.request('POST', `/repos/${enc(ownerId)}/${enc(repo)}/deployments`, input)
+    ),
+  }
+
+  audit = {
+    list: (ownerId: string, repo: string): Promise<AuditEvent[]> => this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/audit`),
+  }
+
+  async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await this.raw(method, path, body)
+    if (res.status === 204) return undefined as T
+    return res.json() as Promise<T>
+  }
+
+  async raw(method: string, path: string, body?: unknown): Promise<Response> {
+    let lastError: unknown
+    for (let attempt = 0; attempt <= this.retries; attempt++) {
+      try {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+        const res = await this.fetchImpl(`${this.baseUrl}/api/v1${path}`, {
+          method,
+          headers: this.headers(body),
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+
+        if (res.ok) return res
+        if (!isRetryable(res.status) || attempt === this.retries) throw await toApiError(res)
+      } catch (err) {
+        lastError = err
+        if (err instanceof RekurnApiError || attempt === this.retries) throw sanitizeError(err)
+      }
+      await sleep(150 * 2 ** attempt)
+    }
+    throw sanitizeError(lastError)
+  }
+
+  private headers(body: unknown): Record<string, string> {
+    const headers: Record<string, string> = { Accept: 'application/json' }
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    if (this.token) headers.Authorization = `Bearer ${this.token}`
+    return headers
+  }
+}
+
+async function toApiError(res: Response): Promise<RekurnApiError> {
+  let message = `Request failed with status ${res.status}`
+  let code: string | undefined
+  try {
+    const json = await res.json() as { error?: string; code?: string }
+    if (json.error) message = sanitizeMessage(json.error)
+    code = json.code
+  } catch {
+    // Keep sanitized default.
+  }
+  return new RekurnApiError(res.status, code, message)
+}
+
+function sanitizeError(err: unknown): Error {
+  if (err instanceof RekurnApiError) return err
+  if (err instanceof DOMException && err.name === 'AbortError') return new Error('Request timed out')
+  return new Error('Network request failed')
+}
+
+function sanitizeMessage(message: string): string {
+  return message.replace(/\/[^\s]+/g, '[path]').slice(0, 300)
+}
+
+function isRetryable(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function enc(value: string): string {
+  return encodeURIComponent(value)
+}
+
+function path(value: string): string {
+  return value.split('/').map(enc).join('/')
 }

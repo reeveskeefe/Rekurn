@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { auth } from './lib/auth'
+import { rateLimit } from './lib/rate-limit'
 
 /**
  * Middleware runs on every /api/* request.
@@ -26,6 +27,17 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/v1/auth/passkey/authenticate')
 
   if (isPublic) {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+    const limited = rateLimit(`${ip}:${pathname}`, 60, 60_000)
+    if (!limited.ok) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(limited.retryAfter) },
+        },
+      )
+    }
     return NextResponse.next()
   }
 
@@ -41,4 +53,3 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: '/api/:path*',
 }
-
