@@ -1,6 +1,6 @@
 import chalk from 'chalk'
 import { createCommit, buildTreeFromPaths, serializeTree, serializeCommit } from '@rekurn/core'
-import type { CommitData } from '@rekurn/types'
+import type { CommitData, Index } from '@rekurn/types'
 import {
   requireRepoRoot,
   readIndex,
@@ -106,8 +106,13 @@ export async function commitCommand(options: CommitOptions): Promise<void> {
     writeHEAD(repoRoot, { type: 'detached', hash: commit.hash })
   }
 
-  // Clear the staging index (it now mirrors the committed tree)
-  writeIndex(repoRoot, {})
+  // Keep the index as the tracked-file baseline for the committed tree.
+  const committedIndex: Index = {}
+  for (const { path } of flatEntries) {
+    const entry = index[path]
+    if (entry && !isConflictIndexEntry(entry)) committedIndex[path] = entry
+  }
+  writeIndex(repoRoot, committedIndex)
   clearMergeState(repoRoot)
 
   // Print summary

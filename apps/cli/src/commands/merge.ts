@@ -248,7 +248,7 @@ function createMergeCommit(
 
   const head = readHEAD(repoRoot)
   if (head.type === 'symbolic') writeRef(repoRoot, head.ref, commit.hash)
-  writeIndex(repoRoot, {})
+  writeIndex(repoRoot, index)
   return commit.hash
 }
 
