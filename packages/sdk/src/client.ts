@@ -7,6 +7,8 @@ import type {
   RepoSummary,
 } from '@rekurn/types'
 
+export type { AuditEvent, CommitObject, DeploymentRecord, ObjectDownload, Ref, RepoSummary } from '@rekurn/types'
+
 export interface RekurnClientOptions {
   /** Base URL of the Rekurn API origin, e.g. "https://api.rekurn.com". */
   baseUrl: string

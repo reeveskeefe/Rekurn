@@ -24,7 +24,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   try {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)
-    return NextResponse.json(repo)
+    return NextResponse.json({
+      name: repo.name,
+      description: repo.description,
+      visibility: repo.visibility,
+      defaultBranch: repo.defaultBranch,
+      deployHooks: repo.deployHooks,
+      createdAt: repo.createdAt,
+    })
   } catch (err) {
     return accessErrorResponse(err) ?? NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

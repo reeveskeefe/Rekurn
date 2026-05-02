@@ -26,7 +26,14 @@ export async function GET(request: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const userRepos = await db
-    .select()
+    .select({
+      name: repos.name,
+      description: repos.description,
+      visibility: repos.visibility,
+      defaultBranch: repos.defaultBranch,
+      deployHooks: repos.deployHooks,
+      createdAt: repos.createdAt,
+    })
     .from(repos)
     .where(eq(repos.ownerId, session.user.id))
     .orderBy(repos.createdAt)
@@ -75,5 +82,13 @@ export async function POST(request: NextRequest) {
     })
     .returning()
 
-  return NextResponse.json(newRepo[0], { status: 201 })
+  const repo = newRepo[0]!
+  return NextResponse.json({
+    name: repo.name,
+    description: repo.description,
+    visibility: repo.visibility,
+    defaultBranch: repo.defaultBranch,
+    deployHooks: repo.deployHooks,
+    createdAt: repo.createdAt,
+  }, { status: 201 })
 }

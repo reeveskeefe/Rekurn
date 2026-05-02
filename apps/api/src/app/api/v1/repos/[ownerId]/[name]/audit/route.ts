@@ -19,7 +19,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)
     const rows = await db
-      .select()
+      .select({
+        action: auditLog.action,
+        meta: auditLog.meta,
+        ip: auditLog.ip,
+        createdAt: auditLog.createdAt,
+        userId: auditLog.userId,
+      })
       .from(auditLog)
       .where(eq(auditLog.repoId, repo.id))
       .orderBy(desc(auditLog.createdAt))

@@ -24,7 +24,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)
 
     const allRefs = await db
-      .select()
+      .select({
+        name: refs.name,
+        commitHash: refs.commitHash,
+        type: refs.type,
+        isImmutable: refs.isImmutable,
+        createdAt: refs.createdAt,
+      })
       .from(refs)
       .where(eq(refs.repoId, repo.id))
       .orderBy(refs.name)

@@ -30,7 +30,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)
     const rows = await db
-      .select()
+      .select({
+        commitHash: deployments.commitHash,
+        env: deployments.env,
+        status: deployments.status,
+        vercelUrl: deployments.vercelUrl,
+        vercelDeploymentId: deployments.vercelDeploymentId,
+        notes: deployments.notes,
+        createdAt: deployments.createdAt,
+      })
       .from(deployments)
       .where(eq(deployments.repoId, repo.id))
       .orderBy(desc(deployments.createdAt))
@@ -70,7 +78,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       })
       .returning()
 
-    return NextResponse.json(inserted, { status: 201 })
+    const row = inserted!
+    return NextResponse.json({
+      commitHash: row.commitHash,
+      env: row.env,
+      status: row.status,
+      vercelUrl: row.vercelUrl,
+      vercelDeploymentId: row.vercelDeploymentId,
+      notes: row.notes,
+      createdAt: row.createdAt,
+    }, { status: 201 })
   } catch (err) {
     return accessErrorResponse(err) ?? NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
