@@ -11,7 +11,7 @@ import type { BlobObject } from '@rekurn/types'
  * file SHA-256 hashes and from Git SHA-1 hashes.
  */
 export function createBlob(content: Buffer): BlobObject {
-  const header = Buffer.from(`rekurn-blob\n${content.length}\n`)
+  const header = blobHeader(content.length)
   const data = Buffer.concat([header, content])
   const hash = sha256(data)
   return {
@@ -26,7 +26,7 @@ export function createBlob(content: Buffer): BlobObject {
  * The stored format is the same data used to compute the hash.
  */
 export function serializeBlob(blob: BlobObject, content: Buffer): Buffer {
-  const header = Buffer.from(`rekurn-blob\n${blob.size}\n`)
+  const header = blobHeader(blob.size)
   return Buffer.concat([header, content])
 }
 
@@ -35,4 +35,8 @@ export function serializeBlob(blob: BlobObject, content: Buffer): Buffer {
  */
 export function hashBlob(content: Buffer): string {
   return createBlob(content).hash
+}
+
+export function blobHeader(size: number): Buffer {
+  return Buffer.from(`rekurn-blob\n${size}\n`)
 }

@@ -205,6 +205,16 @@ export interface ObjectDownload {
   data: string
 }
 
+export interface ObjectBatchItem {
+  hash: string
+  data: string
+}
+
+export interface ObjectBatchDownload {
+  objects: ObjectBatchItem[]
+  missing: string[]
+}
+
 export interface AuditEvent {
   action: string
   meta: unknown

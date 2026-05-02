@@ -48,6 +48,16 @@ export interface ObjectDownload {
   data: string
 }
 
+export interface ObjectBatchItem {
+  hash: string
+  data: string
+}
+
+export interface ObjectBatchDownload {
+  objects: ObjectBatchItem[]
+  missing: string[]
+}
+
 export interface AuditEvent {
   action: string
   meta: unknown
@@ -180,8 +190,14 @@ export class RekurnClient {
     upload: (ownerId: string, repo: string, hash: string, data: string): Promise<{ ok: true }> => (
       this.request('POST', `/repos/${enc(ownerId)}/${enc(repo)}/objects/upload`, { hash, data })
     ),
+    uploadBatch: (ownerId: string, repo: string, objects: ObjectBatchItem[]): Promise<{ ok: true; stored: number }> => (
+      this.request('POST', `/repos/${enc(ownerId)}/${enc(repo)}/objects/upload-batch`, { objects })
+    ),
     download: (ownerId: string, repo: string, hash: string): Promise<ObjectDownload> => (
       this.request('GET', `/repos/${enc(ownerId)}/${enc(repo)}/objects/${enc(hash)}`)
+    ),
+    downloadBatch: (ownerId: string, repo: string, hashes: string[]): Promise<ObjectBatchDownload> => (
+      this.request('POST', `/repos/${enc(ownerId)}/${enc(repo)}/objects/batch`, { hashes })
     ),
     downloadStream: async (ownerId: string, repo: string, hash: string): Promise<ReadableStream<Uint8Array> | null> => {
       const res = await this.raw('GET', `/repos/${enc(ownerId)}/${enc(repo)}/objects/${enc(hash)}`)

@@ -24,7 +24,6 @@ import {
   requireRepoRoot,
   currentBranch,
   resolveHEAD,
-  readObjectFromCache,
   writeRef,
   readConfig,
 } from '../lib/repo.js'
@@ -33,7 +32,7 @@ import {
   getRemoteRefs,
   collectObjectsForPush,
   getMissingFromRemote,
-  uploadObject,
+  uploadObjects,
   updateRemoteRef,
   type PushCertificate,
 } from '../lib/transfer.js'
@@ -132,17 +131,14 @@ export async function pushCommand(
 
   // ----- Upload missing objects -----
   if (missing.length > 0) {
-    let uploaded = 0
-    for (const hash of missing) {
-      const bytes = readObjectFromCache(repoRoot, hash)
-      if (!bytes) {
-        console.warn(chalk.yellow(`  warn: ${hash.slice(0, 12)}… not in local cache, skipping`))
-        continue
-      }
-      await uploadObject(remote, creds.token, hash, bytes)
-      uploaded++
-      process.stdout.write(`\rWriting objects: ${uploaded}/${missing.length}`)
-    }
+    await uploadObjects(
+      remote,
+      creds.token,
+      repoRoot,
+      missing,
+      (uploaded) => process.stdout.write(`\rWriting objects: ${uploaded}/${missing.length}`),
+      (hash) => console.warn(chalk.yellow(`  warn: ${hash.slice(0, 12)}... not in local cache, skipping`)),
+    )
     console.log()
   }
 

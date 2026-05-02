@@ -203,8 +203,14 @@ export function flattenCommitTree(
 ): Record<string, TreeFileEntry> | null {
   const commit = readCommitFromCache(repoRoot, commitHash)
   if (!commit) return null
+  return flattenTreeHash(repoRoot, commit.treeHash)
+}
 
-  const rootTreeBytes = readObjectFromCache(repoRoot, commit.treeHash)
+export function flattenTreeHash(
+  repoRoot: string,
+  treeHash: string,
+): Record<string, TreeFileEntry> | null {
+  const rootTreeBytes = readObjectFromCache(repoRoot, treeHash)
   if (!rootTreeBytes) return null
 
   try {

@@ -2,7 +2,7 @@ export interface MergeFileEntry {
   path: string
   hash: string
   mode: '100644' | '100755' | '120000'
-  content: Buffer
+  content: Buffer | (() => Buffer)
 }
 
 export interface MergeConflict {
@@ -48,11 +48,7 @@ export function threeWayMerge(
       continue
     }
 
-    const conflictContent = conflictMarkers(
-      oursEntry?.content ?? Buffer.alloc(0),
-      theirsEntry?.content ?? Buffer.alloc(0),
-      labels,
-    )
+    const conflictContent = conflictMarkers(readContent(oursEntry), readContent(theirsEntry), labels)
     const mergedEntry: MergeFileEntry = {
       path,
       hash: '',
@@ -93,4 +89,9 @@ function conflictMarkers(
 
 function ensureTrailingNewline(text: string): string {
   return text.length === 0 || text.endsWith('\n') ? text : `${text}\n`
+}
+
+function readContent(entry: MergeFileEntry | undefined): Buffer {
+  if (!entry) return Buffer.alloc(0)
+  return typeof entry.content === 'function' ? entry.content() : entry.content
 }

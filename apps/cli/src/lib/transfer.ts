@@ -8,6 +8,11 @@
 import { parseCommit, parseTree, detectObjectType } from '@rekurn/core'
 import { readObjectFromCache, writeObjectToCache } from './repo.js'
 import type { RemoteInfo } from './remote.js'
+import { mapLimit } from './concurrency.js'
+
+const HASH_CHUNK_SIZE = 5_000
+const MAX_BATCH_REQUEST_BYTES = 25 * 1024 * 1024
+const SINGLE_TRANSFER_CONCURRENCY = 6
 
 // ---------------------------------------------------------------------------
 // Internal HTTP helpers
@@ -21,6 +26,17 @@ function repoBase(info: RemoteInfo): string {
   return `${info.apiUrl}/api/v1/repos/${info.ownerId}/${info.repoName}`
 }
 
+class HttpError extends Error {
+  constructor(
+    readonly method: string,
+    readonly url: string,
+    readonly status: number,
+    readonly responseText: string,
+  ) {
+    super(`${method} ${url} -> ${status}: ${responseText}`)
+  }
+}
+
 async function apiPost<T>(url: string, token: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: 'POST',
@@ -29,9 +45,13 @@ async function apiPost<T>(url: string, token: string, body: unknown): Promise<T>
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`POST ${url} → ${res.status}: ${text}`)
+    throw new HttpError('POST', url, res.status, text)
   }
   return res.json() as Promise<T>
+}
+
+function isUnsupportedEndpoint(err: unknown): boolean {
+  return err instanceof HttpError && (err.status === 404 || err.status === 405)
 }
 
 // ---------------------------------------------------------------------------
@@ -119,12 +139,19 @@ export async function getMissingFromRemote(
   hashes: string[],
 ): Promise<string[]> {
   if (hashes.length === 0) return []
-  const data = await apiPost<{ missing: string[] }>(
-    `${repoBase(info)}/objects/want`,
-    token,
-    { hashes },
-  )
-  return data.missing
+  const missing: string[] = []
+
+  for (let i = 0; i < hashes.length; i += HASH_CHUNK_SIZE) {
+    const chunk = hashes.slice(i, i + HASH_CHUNK_SIZE)
+    const data = await apiPost<{ missing: string[] }>(
+      `${repoBase(info)}/objects/want`,
+      token,
+      { hashes: chunk },
+    )
+    missing.push(...data.missing)
+  }
+
+  return missing
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +170,89 @@ export async function uploadObject(
   await apiPost(`${repoBase(info)}/objects/upload`, token, {
     hash,
     data: bytes.toString('base64'),
+  })
+}
+
+export async function uploadObjects(
+  info: RemoteInfo,
+  token: string,
+  repoRoot: string,
+  hashes: string[],
+  onProgress?: (uploaded: number) => void,
+  onMissingLocal?: (hash: string) => void,
+): Promise<number> {
+  let uploaded = 0
+  let batchSupported = true
+  let batch: Array<{ hash: string; bytes: Buffer }> = []
+  let batchRequestBytes = 16
+
+  async function flushBatch(): Promise<void> {
+    if (batch.length === 0) return
+    const current = batch
+    batch = []
+    batchRequestBytes = 16
+
+    if (batchSupported) {
+      try {
+        await uploadObjectBatch(info, token, current)
+        uploaded += current.length
+        onProgress?.(uploaded)
+        return
+      } catch (err) {
+        if (!isUnsupportedEndpoint(err)) throw err
+        batchSupported = false
+      }
+    }
+
+    await mapLimit(current, SINGLE_TRANSFER_CONCURRENCY, async (item) => {
+      await uploadObject(info, token, item.hash, item.bytes)
+    })
+    uploaded += current.length
+    onProgress?.(uploaded)
+  }
+
+  for (const hash of hashes) {
+    const bytes = readObjectFromCache(repoRoot, hash)
+    if (!bytes) {
+      onMissingLocal?.(hash)
+      continue
+    }
+
+    const requestBytes = estimatedBatchObjectBytes(bytes)
+    if (requestBytes > MAX_BATCH_REQUEST_BYTES) {
+      await flushBatch()
+      await uploadObject(info, token, hash, bytes)
+      uploaded++
+      onProgress?.(uploaded)
+      continue
+    }
+
+    if (batch.length > 0 && batchRequestBytes + requestBytes > MAX_BATCH_REQUEST_BYTES) {
+      await flushBatch()
+    }
+
+    batch.push({ hash, bytes })
+    batchRequestBytes += requestBytes
+  }
+
+  await flushBatch()
+  return uploaded
+}
+
+function estimatedBatchObjectBytes(bytes: Buffer): number {
+  return Math.ceil(bytes.length / 3) * 4 + 90
+}
+
+async function uploadObjectBatch(
+  info: RemoteInfo,
+  token: string,
+  objects: Array<{ hash: string; bytes: Buffer }>,
+): Promise<void> {
+  await apiPost(`${repoBase(info)}/objects/upload-batch`, token, {
+    objects: objects.map((object) => ({
+      hash: object.hash,
+      data: object.bytes.toString('base64'),
+    })),
   })
 }
 
@@ -170,6 +280,23 @@ export async function downloadObject(
   } catch {
     return null
   }
+}
+
+async function downloadObjectsBatch(
+  info: RemoteInfo,
+  token: string,
+  hashes: string[],
+): Promise<Map<string, Buffer>> {
+  const data = await apiPost<{
+    objects: Array<{ hash: string; data: string }>
+    missing: string[]
+  }>(`${repoBase(info)}/objects/batch`, token, { hashes })
+
+  const objects = new Map<string, Buffer>()
+  for (const object of data.objects) {
+    objects.set(object.hash, Buffer.from(object.data, 'base64'))
+  }
+  return objects
 }
 
 // ---------------------------------------------------------------------------
@@ -264,43 +391,78 @@ export async function fetchObjects(
   const pending = [...startHashes]
   const enqueued = new Set<string>(startHashes)
   let downloaded = 0
+  let batchSupported = true
 
   while (pending.length > 0) {
-    const hash = pending.pop()!
+    const hashes: string[] = []
+    while (pending.length > 0 && hashes.length < HASH_CHUNK_SIZE) {
+      const hash = pending.pop()!
+      if (!readObjectFromCache(repoRoot, hash)) hashes.push(hash)
+    }
 
-    // Already in local cache?
-    if (readObjectFromCache(repoRoot, hash)) {
+    if (hashes.length === 0) {
       continue
     }
 
-    const bytes = await downloadObject(info, token, hash)
-    if (!bytes) {
-      console.warn(`  warn: object ${hash.slice(0, 12)}… not found on remote`)
-      continue
-    }
-
-    writeObjectToCache(repoRoot, hash, bytes)
-    downloaded++
-    onProgress?.(downloaded)
-
-    // Traverse the object graph
-    try {
-      const type = detectObjectType(bytes)
-      if (type === 'commit') {
-        const commit = parseCommit(bytes)
-        enqueue(commit.treeHash, pending, enqueued)
-        for (const parent of commit.parentHashes) enqueue(parent, pending, enqueued)
-      } else if (type === 'tree') {
-        const tree = parseTree(bytes)
-        for (const entry of tree.entries) enqueue(entry.hash, pending, enqueued)
+    let objects: Map<string, Buffer>
+    if (batchSupported) {
+      try {
+        objects = await downloadObjectsBatch(info, token, hashes)
+      } catch (err) {
+        if (!isUnsupportedEndpoint(err)) throw err
+        batchSupported = false
+        objects = await downloadObjectsIndividually(info, token, hashes)
       }
-      // Blobs: no further traversal needed
-    } catch {
-      // Unknown object type or parse error — skip traversal
+    } else {
+      objects = await downloadObjectsIndividually(info, token, hashes)
+    }
+
+    for (const hash of hashes) {
+      const bytes = objects.get(hash)
+      if (!bytes) {
+        console.warn(`  warn: object ${hash.slice(0, 12)}... not found on remote`)
+        continue
+      }
+
+      writeObjectToCache(repoRoot, hash, bytes)
+      downloaded++
+      onProgress?.(downloaded)
+
+      // Traverse the object graph
+      try {
+        const type = detectObjectType(bytes)
+        if (type === 'commit') {
+          const commit = parseCommit(bytes)
+          enqueue(commit.treeHash, pending, enqueued)
+          for (const parent of commit.parentHashes) enqueue(parent, pending, enqueued)
+        } else if (type === 'tree') {
+          const tree = parseTree(bytes)
+          for (const entry of tree.entries) enqueue(entry.hash, pending, enqueued)
+        }
+        // Blobs: no further traversal needed
+      } catch {
+        // Unknown object type or parse error — skip traversal
+      }
     }
   }
 
   return downloaded
+}
+
+async function downloadObjectsIndividually(
+  info: RemoteInfo,
+  token: string,
+  hashes: string[],
+): Promise<Map<string, Buffer>> {
+  const rows = await mapLimit(hashes, SINGLE_TRANSFER_CONCURRENCY, async (hash) => ({
+    hash,
+    bytes: await downloadObject(info, token, hash),
+  }))
+  const objects = new Map<string, Buffer>()
+  for (const row of rows) {
+    if (row.bytes) objects.set(row.hash, row.bytes)
+  }
+  return objects
 }
 
 function enqueue(hash: string, pending: string[], enqueued: Set<string>): void {

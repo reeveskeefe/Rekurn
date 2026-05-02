@@ -16,7 +16,7 @@
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import chalk from 'chalk'
-import { parseCommit, parseTree } from '@rekurn/core'
+import { parseCommit } from '@rekurn/core'
 import { loadCredentials } from '../lib/credentials.js'
 import {
   rekurnDir,
@@ -24,6 +24,7 @@ import {
   writeRef,
   readObjectFromCache,
   writeIndex,
+  flattenTreeHash,
 } from '../lib/repo.js'
 import { parseRemoteUrl, setRemote } from '../lib/remote.js'
 import { getRemoteRefs, fetchObjects } from '../lib/transfer.js'
@@ -39,31 +40,11 @@ function extractBlobContent(bytes: Buffer): Buffer {
   return afterPrefix.slice(nlIdx + 1)
 }
 
-function flattenTree(
-  repoRoot: string,
-  treeHash: string,
-  prefix: string,
-  acc: Record<string, { hash: string; mode: string }>,
-): void {
-  const bytes = readObjectFromCache(repoRoot, treeHash)
-  if (!bytes) return
-  const tree = parseTree(bytes)
-  for (const entry of tree.entries) {
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.mode === '040000') {
-      flattenTree(repoRoot, entry.hash, path, acc)
-    } else {
-      acc[path] = { hash: entry.hash, mode: entry.mode }
-    }
-  }
-}
-
 function checkoutTree(
   repoRoot: string,
   treeHash: string,
 ): { index: Index; fileCount: number } {
-  const files: Record<string, { hash: string; mode: string }> = {}
-  flattenTree(repoRoot, treeHash, '', files)
+  const files = flattenTreeHash(repoRoot, treeHash) ?? {}
 
   const index: Index = {}
   let fileCount = 0

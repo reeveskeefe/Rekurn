@@ -1,5 +1,5 @@
 // Blob
-export { createBlob, serializeBlob, hashBlob } from './blob.js'
+export { createBlob, serializeBlob, hashBlob, blobHeader } from './blob.js'
 
 // Tree
 export {

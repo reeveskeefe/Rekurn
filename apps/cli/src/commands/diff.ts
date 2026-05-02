@@ -1,16 +1,20 @@
 import { existsSync, readFileSync } from 'fs'
+import { stat } from 'fs/promises'
 import { join } from 'path'
 import chalk from 'chalk'
-import { hashBlob } from '@rekurn/core'
-import { unifiedDiff } from '@rekurn/diff'
+import { opaqueFileDiff, unifiedDiff } from '@rekurn/diff'
 import {
   requireRepoRoot,
   readIndex,
   readObjectFromCache,
   resolveHEAD,
   isResolvedIndexEntry,
+  flattenCommitTree,
 } from '../lib/repo.js'
 import { printDiff } from '../lib/format.js'
+import { hashFileAsBlob } from '../lib/file-objects.js'
+
+const MAX_TEXT_DIFF_BYTES = 4 * 1024 * 1024
 
 export interface DiffOptions {
   staged?: boolean
@@ -26,7 +30,7 @@ export async function diffCommand(options: DiffOptions): Promise<void> {
     await diffStagedVsHead(repoRoot, resolvedIndex(index))
   } else {
     // Working tree diff: working files vs index
-    diffWorkingVsIndex(repoRoot, resolvedIndex(index))
+    await diffWorkingVsIndex(repoRoot, resolvedIndex(index))
   }
 }
 
@@ -38,7 +42,7 @@ async function diffStagedVsHead(
   repoRoot: string,
   index: Record<string, { hash: string; mode: string; size: number }>,
 ): Promise<void> {
-  const headTree = await buildHeadTreeMap(repoRoot)
+  const headTree = buildHeadTreeMap(repoRoot)
   let hasDiff = false
 
   const allPaths = new Set([...Object.keys(index), ...Object.keys(headTree)])
@@ -55,12 +59,22 @@ async function diffStagedVsHead(
       hasDiff = true
     } else if (indexEntry && !headHash) {
       // New file in staged
+      if (indexEntry.size > MAX_TEXT_DIFF_BYTES) {
+        printDiff(opaqueFileDiff(relPath, relPath, 'Large file differs; text diff omitted.'))
+        hasDiff = true
+        continue
+      }
       const newContent = readBlobContent(repoRoot, relPath, indexEntry.hash)
       const diff = unifiedDiff('', newContent, relPath, relPath)
       printDiff(diff)
       hasDiff = true
     } else if (indexEntry && headHash && indexEntry.hash !== headHash) {
       // Modified in staged
+      if (indexEntry.size > MAX_TEXT_DIFF_BYTES) {
+        printDiff(opaqueFileDiff(relPath, relPath, 'Large file differs; text diff omitted.'))
+        hasDiff = true
+        continue
+      }
       const oldContent = readBlobFromCache(repoRoot, headHash)
       const newContent = readBlobContent(repoRoot, relPath, indexEntry.hash)
       const diff = unifiedDiff(oldContent, newContent, relPath, relPath)
@@ -78,10 +92,10 @@ async function diffStagedVsHead(
 // Working tree diff  (unstaged changes)
 // ---------------------------------------------------------------------------
 
-function diffWorkingVsIndex(
+async function diffWorkingVsIndex(
   repoRoot: string,
   index: Record<string, { hash: string; mode: string; size: number }>,
-): void {
+): Promise<void> {
   let hasDiff = false
 
   for (const [relPath, entry] of Object.entries(index)) {
@@ -96,12 +110,20 @@ function diffWorkingVsIndex(
       continue
     }
 
-    const currentContent = readFileSync(fullPath)
-    const currentHash = hashBlob(currentContent)
+    const stats = await stat(fullPath)
+    const currentHash = stats.size === entry.size
+      ? await hashFileAsBlob(fullPath, stats.size)
+      : null
 
     if (currentHash !== entry.hash) {
+      if (entry.size + stats.size > MAX_TEXT_DIFF_BYTES) {
+        printDiff(opaqueFileDiff(relPath, relPath, 'Large file differs; text diff omitted.'))
+        hasDiff = true
+        continue
+      }
+
       const oldContent = readBlobContent(repoRoot, relPath, entry.hash)
-      const newContent = currentContent.toString('utf8')
+      const newContent = readFileSync(fullPath, 'utf8')
       const diff = unifiedDiff(oldContent, newContent, relPath, relPath)
       printDiff(diff)
       hasDiff = true
@@ -140,45 +162,14 @@ function readBlobFromCache(repoRoot: string, hash: string): string {
   return buf.slice(headerEnd + 1).toString('utf8')
 }
 
-async function buildHeadTreeMap(repoRoot: string): Promise<Record<string, string>> {
+function buildHeadTreeMap(repoRoot: string): Record<string, string> {
   const headHash = resolveHEAD(repoRoot)
   if (!headHash) return {}
 
-  const commitBuf = readObjectFromCache(repoRoot, headHash)
-  if (!commitBuf) return {}
-
-  const commitText = commitBuf.toString('utf8')
-  const treeMatch = commitText.match(/tree ([0-9a-f]{64})/)
-  if (!treeMatch) return {}
+  const entries = flattenCommitTree(repoRoot, headHash)
+  if (!entries) return {}
 
   const treeMap: Record<string, string> = {}
-  await flattenTree(repoRoot, treeMatch[1]!, '', treeMap)
+  for (const [path, entry] of Object.entries(entries)) treeMap[path] = entry.hash
   return treeMap
-}
-
-async function flattenTree(
-  repoRoot: string,
-  treeHash: string,
-  prefix: string,
-  acc: Record<string, string>,
-): Promise<void> {
-  const treeBuf = readObjectFromCache(repoRoot, treeHash)
-  if (!treeBuf) return
-
-  const raw = treeBuf.toString('utf8')
-  const jsonStart = raw.indexOf('{')
-  if (jsonStart === -1) return
-
-  const treeObj = JSON.parse(raw.slice(jsonStart)) as {
-    entries: Array<{ mode: string; name: string; hash: string }>
-  }
-
-  for (const entry of treeObj.entries) {
-    const entryPath = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.mode === '040000') {
-      await flattenTree(repoRoot, entry.hash, entryPath, acc)
-    } else {
-      acc[entryPath] = entry.hash
-    }
-  }
 }

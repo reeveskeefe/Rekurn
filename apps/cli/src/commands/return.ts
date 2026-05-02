@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, statSync } from 'fs'
 import { join, dirname } from 'path'
 import chalk from 'chalk'
-import { hashBlob } from '@rekurn/core'
 import type { Index } from '@rekurn/types'
 import {
   requireRepoRoot,
@@ -15,8 +14,10 @@ import {
   currentBranch,
   isResolvedIndexEntry,
   readMergeHead,
+  flattenCommitTree,
 } from '../lib/repo.js'
 import { resolveAtSelector, resolveSelector } from '../lib/selectors.js'
+import { hashFileAsBlob } from '../lib/file-objects.js'
 
 export interface ReturnOptions {
   /** Create a new branch at the current HEAD and switch to it. */
@@ -126,7 +127,7 @@ export async function returnCommand(
   // Safety check — abort if there are uncommitted changes (unless --force)
   // -------------------------------------------------------------------------
   if (!options.force) {
-    const dirty = checkDirtyState(repoRoot, currentHeadHash)
+    const dirty = await checkDirtyState(repoRoot, currentHeadHash)
     if (dirty) {
       console.error('')
       console.error(chalk.dim('  Commit your changes first, or use --force to discard them.'))
@@ -145,17 +146,15 @@ export async function returnCommand(
   }
 
   const commitText = targetCommitBuf.toString('utf8')
-  const treeMatch = commitText.match(/tree ([0-9a-f]{64})/)
-  if (!treeMatch) {
-    console.error(chalk.red(`fatal: corrupt commit object ${targetHash.slice(0, 7)}`))
-    process.exit(1)
-  }
 
   // -------------------------------------------------------------------------
   // Flatten target tree: path → { hash, mode }
   // -------------------------------------------------------------------------
-  const targetFiles: Record<string, { hash: string; mode: string }> = {}
-  flattenTree(repoRoot, treeMatch[1]!, '', targetFiles)
+  const targetFiles = flattenCommitTree(repoRoot, targetHash)
+  if (!targetFiles) {
+    console.error(chalk.red(`fatal: corrupt commit object ${targetHash.slice(0, 7)}`))
+    process.exit(1)
+  }
 
   // -------------------------------------------------------------------------
   // Apply checkout to working tree
@@ -254,15 +253,13 @@ function previewCheckout(repoRoot: string, targetHash: string, currentHeadHash: 
     process.exit(1)
   }
 
-  const targetFiles: Record<string, { hash: string; mode: string }> = {}
-  flattenTree(repoRoot, treeMatch[1]!, '', targetFiles)
-
-  const currentFiles: Record<string, { hash: string; mode: string }> = {}
-  if (currentHeadHash) {
-    const currentCommit = readObjectFromCache(repoRoot, currentHeadHash)
-    const currentTree = currentCommit?.toString('utf8').match(/tree ([0-9a-f]{64})/)
-    if (currentTree) flattenTree(repoRoot, currentTree[1]!, '', currentFiles)
+  const targetFiles = flattenCommitTree(repoRoot, targetHash)
+  if (!targetFiles) {
+    console.error(chalk.red(`fatal: corrupt commit object ${targetHash.slice(0, 7)}`))
+    process.exit(1)
   }
+
+  const currentFiles = currentHeadHash ? flattenCommitTree(repoRoot, currentHeadHash) ?? {} : {}
 
   const paths = new Set([...Object.keys(currentFiles), ...Object.keys(targetFiles)])
   let added = 0
@@ -295,8 +292,11 @@ function restoreSingleFile(
     process.exit(1)
   }
 
-  const files: Record<string, { hash: string; mode: string }> = {}
-  flattenTree(repoRoot, treeMatch[1]!, '', files)
+  const files = flattenCommitTree(repoRoot, targetHash)
+  if (!files) {
+    console.error(chalk.red(`fatal: corrupt commit object ${targetHash.slice(0, 7)}`))
+    process.exit(1)
+  }
   const file = files[filePath]
   if (!file) {
     console.error(chalk.red(`error: '${filePath}' does not exist at ${targetHash.slice(0, 7)}`))
@@ -336,7 +336,7 @@ function restoreSingleFile(
  * Returns true if the working tree has uncommitted changes (either staged
  * or unstaged). Prints a specific error message for each kind.
  */
-function checkDirtyState(repoRoot: string, currentHeadHash: string | null): boolean {
+async function checkDirtyState(repoRoot: string, currentHeadHash: string | null): Promise<boolean> {
   const index = readIndex(repoRoot)
   let dirty = false
 
@@ -344,16 +344,9 @@ function checkDirtyState(repoRoot: string, currentHeadHash: string | null): bool
   const headTree: Record<string, string> = {}
 
   if (currentHeadHash) {
-    const commitBuf = readObjectFromCache(repoRoot, currentHeadHash)
-    if (commitBuf) {
-      const treeMatch = commitBuf.toString('utf8').match(/tree ([0-9a-f]{64})/)
-      if (treeMatch) {
-        const treeFiles: Record<string, { hash: string; mode: string }> = {}
-        flattenTree(repoRoot, treeMatch[1]!, '', treeFiles)
-        for (const [p, { hash }] of Object.entries(treeFiles)) {
-          headTree[p] = hash
-        }
-      }
+    const treeFiles = flattenCommitTree(repoRoot, currentHeadHash)
+    if (treeFiles) {
+      for (const [p, { hash }] of Object.entries(treeFiles)) headTree[p] = hash
     }
   }
 
@@ -392,8 +385,14 @@ function checkDirtyState(repoRoot: string, currentHeadHash: string | null): bool
         break
       }
 
-      const content = readFileSync(fullPath)
-      if (hashBlob(content) !== entry.hash) {
+      const stats = statSync(fullPath)
+      if (stats.size !== entry.size) {
+        console.error(chalk.red(`error: Your local changes to '${relPath}' would be overwritten.`))
+        dirty = true
+        break
+      }
+
+      if (await hashFileAsBlob(fullPath, stats.size) !== entry.hash) {
         console.error(chalk.red(`error: Your local changes to '${relPath}' would be overwritten.`))
         dirty = true
         break
@@ -402,41 +401,6 @@ function checkDirtyState(repoRoot: string, currentHeadHash: string | null): bool
   }
 
   return dirty
-}
-
-// ---------------------------------------------------------------------------
-// Tree helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Recursively flatten a tree object into a flat map of relative path →
- * { hash, mode }.  Synchronous — all objects must be in the local cache.
- */
-function flattenTree(
-  repoRoot: string,
-  treeHash: string,
-  prefix: string,
-  acc: Record<string, { hash: string; mode: string }>,
-): void {
-  const buf = readObjectFromCache(repoRoot, treeHash)
-  if (!buf) return
-
-  const raw = buf.toString('utf8')
-  const jsonStart = raw.indexOf('{')
-  if (jsonStart === -1) return
-
-  const treeObj = JSON.parse(raw.slice(jsonStart)) as {
-    entries: Array<{ mode: string; name: string; hash: string }>
-  }
-
-  for (const entry of treeObj.entries) {
-    const entryPath = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.mode === '040000') {
-      flattenTree(repoRoot, entry.hash, entryPath, acc)
-    } else {
-      acc[entryPath] = { hash: entry.hash, mode: entry.mode }
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

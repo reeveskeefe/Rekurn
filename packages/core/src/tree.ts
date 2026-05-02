@@ -59,14 +59,19 @@ export function flattenTreeEntries(
   prefix = '',
 ): TreeFileEntry[] {
   const files: TreeFileEntry[] = []
+  const stack: Array<{ tree: TreeObject; prefix: string }> = [{ tree, prefix }]
 
-  for (const entry of tree.entries) {
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.mode === '040000') {
-      const child = readTree(entry.hash)
-      if (child) files.push(...flattenTreeEntries(child, readTree, path))
-    } else {
-      files.push({ path, hash: entry.hash, mode: entry.mode })
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    for (let i = current.tree.entries.length - 1; i >= 0; i--) {
+      const entry = current.tree.entries[i]!
+      const path = current.prefix ? `${current.prefix}/${entry.name}` : entry.name
+      if (entry.mode === '040000') {
+        const child = readTree(entry.hash)
+        if (child) stack.push({ tree: child, prefix: path })
+      } else {
+        files.push({ path, hash: entry.hash, mode: entry.mode })
+      }
     }
   }
 
@@ -88,11 +93,6 @@ export interface FlatEntry {
   path: string
   hash: string
   mode: FileMode
-}
-
-interface SubTreeResult {
-  trees: TreeObject[]
-  entries: TreeEntry[]
 }
 
 /**
@@ -117,43 +117,67 @@ export function buildTreeFromPaths(flatEntries: FlatEntry[]): {
   rootTree: TreeObject
   allTrees: TreeObject[]
 } {
-  const { trees, entries } = buildSubTree(flatEntries, '')
+  const root = createTrieNode()
+  for (const entry of flatEntries) {
+    insertTrieEntry(root, entry)
+  }
+
+  const trees: TreeObject[] = []
+  const entries = buildTrieTree(root, trees)
   const rootTree = createTree(entries)
   return { rootTree, allTrees: [...trees, rootTree] }
 }
 
-function buildSubTree(entries: FlatEntry[], prefix: string): SubTreeResult {
-  const allTrees: TreeObject[] = []
-  const rootEntries: TreeEntry[] = []
+interface TrieNode {
+  file: { hash: string; mode: FileMode } | null
+  children: Map<string, TrieNode>
+}
 
-  // Group entries by their first path component under this prefix.
-  // Files land directly in rootEntries; directories are collected for recursion.
-  const dirGroups = new Map<string, FlatEntry[]>()
+function createTrieNode(): TrieNode {
+  return { file: null, children: new Map() }
+}
 
-  for (const entry of entries) {
-    // Strip the prefix + separator to get the relative path at this level.
-    const relative = prefix ? entry.path.slice(prefix.length + 1) : entry.path
-    const slashIdx = relative.indexOf('/')
+function insertTrieEntry(root: TrieNode, entry: FlatEntry): void {
+  const parts = entry.path.split('/').filter(Boolean)
+  if (parts.length === 0) return
 
-    if (slashIdx === -1) {
-      // This entry lives directly at the current tree level.
-      rootEntries.push({ mode: entry.mode, name: relative, hash: entry.hash })
-    } else {
-      // This entry is inside a subdirectory.
-      const dirName = relative.slice(0, slashIdx)
-      if (!dirGroups.has(dirName)) dirGroups.set(dirName, [])
-      dirGroups.get(dirName)!.push(entry)
+  let node = root
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!
+    if (i === parts.length - 1) {
+      let leaf = node.children.get(part)
+      if (!leaf) {
+        leaf = createTrieNode()
+        node.children.set(part, leaf)
+      }
+      leaf.file = { hash: entry.hash, mode: entry.mode }
+      return
+    }
+
+    let child = node.children.get(part)
+    if (!child) {
+      child = createTrieNode()
+      node.children.set(part, child)
+    }
+    node = child
+  }
+}
+
+function buildTrieTree(node: TrieNode, allTrees: TreeObject[]): TreeEntry[] {
+  const entries: TreeEntry[] = []
+  const names = [...node.children.keys()].sort((a, b) => a.localeCompare(b))
+
+  for (const name of names) {
+    const child = node.children.get(name)!
+    if (child.children.size > 0) {
+      const childEntries = buildTrieTree(child, allTrees)
+      const childTree = createTree(childEntries)
+      allTrees.push(childTree)
+      entries.push({ mode: '040000', name, hash: childTree.hash })
+    } else if (child.file) {
+      entries.push({ mode: child.file.mode, name, hash: child.file.hash })
     }
   }
 
-  // Recursively build a tree for each subdirectory.
-  for (const [dirName, subEntries] of dirGroups) {
-    const subPrefix = prefix ? `${prefix}/${dirName}` : dirName
-    const sub = buildSubTree(subEntries, subPrefix)
-    const subTree = createTree(sub.entries)
-    allTrees.push(...sub.trees, subTree)
-    rootEntries.push({ mode: '040000', name: dirName, hash: subTree.hash })
-  }
-
-  return { trees: allTrees, entries: rootEntries }
+  return entries
 }

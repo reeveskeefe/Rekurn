@@ -13,7 +13,7 @@
 import chalk from 'chalk'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { parseCommit, parseTree } from '@rekurn/core'
+import { parseCommit } from '@rekurn/core'
 import { loadCredentials } from '../lib/credentials.js'
 import {
   requireRepoRoot,
@@ -23,6 +23,7 @@ import {
   writeRef,
   readObjectFromCache,
   writeIndex,
+  flattenTreeHash,
 } from '../lib/repo.js'
 import { getRemote } from '../lib/remote.js'
 import { fetchCommand } from './fetch.js'
@@ -40,32 +41,12 @@ function extractBlobContent(bytes: Buffer): Buffer {
   return afterPrefix.slice(nlIdx + 1)
 }
 
-function flattenTree(
-  repoRoot: string,
-  treeHash: string,
-  prefix: string,
-  acc: Record<string, { hash: string; mode: string }>,
-): void {
-  const bytes = readObjectFromCache(repoRoot, treeHash)
-  if (!bytes) return
-  const tree = parseTree(bytes)
-  for (const entry of tree.entries) {
-    const path = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.mode === '040000') {
-      flattenTree(repoRoot, entry.hash, path, acc)
-    } else {
-      acc[path] = { hash: entry.hash, mode: entry.mode }
-    }
-  }
-}
-
 function checkoutCommit(repoRoot: string, commitHash: string): { fileCount: number } {
   const commitBytes = readObjectFromCache(repoRoot, commitHash)
   if (!commitBytes) throw new Error(`Commit ${commitHash.slice(0, 12)}… not in local cache`)
 
   const commit = parseCommit(commitBytes)
-  const files: Record<string, { hash: string; mode: string }> = {}
-  flattenTree(repoRoot, commit.treeHash, '', files)
+  const files = flattenTreeHash(repoRoot, commit.treeHash) ?? {}
 
   const index: Index = {}
   let fileCount = 0

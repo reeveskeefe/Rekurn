@@ -6,6 +6,8 @@ import type { LineEdit } from './myers.js'
 // ---------------------------------------------------------------------------
 
 const CONTEXT_LINES = 3
+const MAX_TEXT_DIFF_BYTES = 4 * 1024 * 1024
+const MIN_BYTES_PER_NEWLINE = 4_000
 
 interface Hunk {
   oldStart: number
@@ -33,6 +35,9 @@ export function unifiedDiff(
 ): string {
   if (oldText === newText) return ''
 
+  const opaqueReason = opaqueDiffReason(oldText, newText)
+  if (opaqueReason) return opaqueDiff(oldPath, newPath, opaqueReason)
+
   const edits = diffLines(oldText, newText)
   const hunks = buildHunks(edits)
 
@@ -52,6 +57,47 @@ export function unifiedDiff(
   }
 
   return lines.join('\n') + '\n'
+}
+
+export function opaqueFileDiff(oldPath: string, newPath: string, reason: string): string {
+  return opaqueDiff(oldPath, newPath, reason)
+}
+
+function opaqueDiffReason(oldText: string, newText: string): string | null {
+  if (oldText.includes('\0') || newText.includes('\0')) {
+    return 'Binary files differ; text diff omitted.'
+  }
+
+  const bytes = Buffer.byteLength(oldText) + Buffer.byteLength(newText)
+  if (bytes > MAX_TEXT_DIFF_BYTES) {
+    return 'Large file differs; text diff omitted.'
+  }
+
+  const newlineCount = countNewlines(oldText) + countNewlines(newText)
+  if (bytes > 256 * 1024 && newlineCount > 0 && bytes / newlineCount > MIN_BYTES_PER_NEWLINE) {
+    return 'Low-newline-density file differs; text diff omitted.'
+  }
+
+  return null
+}
+
+function opaqueDiff(oldPath: string, newPath: string, reason: string): string {
+  return [
+    `diff --rekurn a/${oldPath} b/${newPath}`,
+    `--- a/${oldPath}`,
+    `+++ b/${newPath}`,
+    '@@ opaque @@',
+    reason,
+    '',
+  ].join('\n')
+}
+
+function countNewlines(text: string): number {
+  let count = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) count++
+  }
+  return count
 }
 
 function buildHunks(edits: LineEdit[]): Hunk[] {

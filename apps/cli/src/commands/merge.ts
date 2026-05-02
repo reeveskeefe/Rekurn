@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import chalk from 'chalk'
-import { createBlob, createCommit, serializeBlob, serializeCommit, serializeTree, buildTreeFromPaths, hashBlob } from '@rekurn/core'
+import { createBlob, createCommit, serializeBlob, serializeCommit, serializeTree, buildTreeFromPaths } from '@rekurn/core'
 import { threeWayMerge, type MergeFileEntry } from '@rekurn/diff'
 import type { CommitData, Index } from '@rekurn/types'
 import {
@@ -23,6 +23,7 @@ import {
   writeObjectToCache,
   writeRef,
 } from '../lib/repo.js'
+import { hashFileAsBlob } from '../lib/file-objects.js'
 
 export async function mergeCommand(branchOrCommit: string): Promise<void> {
   const repoRoot = requireRepoRoot()
@@ -38,7 +39,7 @@ export async function mergeCommand(branchOrCommit: string): Promise<void> {
     process.exit(1)
   }
 
-  assertCleanWorkingTree(repoRoot)
+  await assertCleanWorkingTree(repoRoot)
 
   const theirsHash = resolveToCommitHash(repoRoot, branchOrCommit)
   if (!theirsHash) {
@@ -94,7 +95,7 @@ export async function mergeCommand(branchOrCommit: string): Promise<void> {
   console.log(`Merge made by the three-way strategy ${chalk.yellow(commitHash.slice(0, 7))}.`)
 }
 
-function assertCleanWorkingTree(repoRoot: string): void {
+async function assertCleanWorkingTree(repoRoot: string): Promise<void> {
   const index = readIndex(repoRoot)
   for (const [path, entry] of Object.entries(index)) {
     if (!isResolvedIndexEntry(entry)) {
@@ -108,7 +109,13 @@ function assertCleanWorkingTree(repoRoot: string): void {
       process.exit(1)
     }
 
-    const currentHash = hashBlob(readFileSync(fullPath))
+    const stats = statSync(fullPath)
+    if (stats.size !== entry.size) {
+      console.error(chalk.red(`fatal: local changes to '${path}' would be overwritten by merge`))
+      process.exit(1)
+    }
+
+    const currentHash = await hashFileAsBlob(fullPath, stats.size)
     if (currentHash !== entry.hash) {
       console.error(chalk.red(`fatal: local changes to '${path}' would be overwritten by merge`))
       process.exit(1)
@@ -124,9 +131,12 @@ function fastForward(repoRoot: string, targetHash: string): void {
   }
 
   const index = checkoutFiles(repoRoot, new Map(Object.entries(files).map(([path, entry]) => {
-    const content = extractBlobContent(repoRoot, entry.hash)
-    if (!content) throw new Error(`missing blob ${entry.hash}`)
-    return [path, { path, hash: entry.hash, mode: entry.mode as MergeFileEntry['mode'], content }]
+    return [path, {
+      path,
+      hash: entry.hash,
+      mode: entry.mode as MergeFileEntry['mode'],
+      content: lazyBlobContent(repoRoot, path, entry.hash),
+    }]
   })))
 
   writeIndex(repoRoot, index)
@@ -144,16 +154,11 @@ function loadMergeMap(repoRoot: string, commitHash: string): Map<string, MergeFi
 
   const map = new Map<string, MergeFileEntry>()
   for (const [path, entry] of Object.entries(tree)) {
-    const content = extractBlobContent(repoRoot, entry.hash)
-    if (content === null) {
-      console.error(chalk.red(`fatal: missing blob ${entry.hash.slice(0, 7)} for '${path}'`))
-      process.exit(1)
-    }
     map.set(path, {
       path,
       hash: entry.hash,
       mode: entry.mode as MergeFileEntry['mode'],
-      content,
+      content: lazyBlobContent(repoRoot, path, entry.hash),
     })
   }
   return map
@@ -195,22 +200,39 @@ function checkoutFiles(
 
   const index: Index = {}
   for (const [path, entry] of files) {
+    const content = resolveMergeContent(entry)
     const fullPath = join(repoRoot, path)
     mkdirSync(dirname(fullPath), { recursive: true })
-    writeFileSync(fullPath, entry.content)
+    writeFileSync(fullPath, content)
 
     if (conflicted.has(path)) continue
 
-    const blob = createBlob(entry.content)
-    if (!entry.hash) writeObjectToCache(repoRoot, blob.hash, serializeBlob(blob, entry.content))
+    let hash = entry.hash
+    if (!hash) {
+      const blob = createBlob(content)
+      hash = blob.hash
+      writeObjectToCache(repoRoot, blob.hash, serializeBlob(blob, content))
+    }
 
     index[path] = {
-      hash: entry.hash || blob.hash,
+      hash,
       mode: entry.mode === '100755' ? '100755' : '100644',
-      size: statSync(fullPath).size,
+      size: content.length,
     }
   }
   return index
+}
+
+function lazyBlobContent(repoRoot: string, path: string, hash: string): () => Buffer {
+  return () => {
+    const content = extractBlobContent(repoRoot, hash)
+    if (content === null) throw new Error(`missing blob ${hash.slice(0, 7)} for '${path}'`)
+    return content
+  }
+}
+
+function resolveMergeContent(entry: MergeFileEntry): Buffer {
+  return typeof entry.content === 'function' ? entry.content() : entry.content
 }
 
 function createMergeCommit(

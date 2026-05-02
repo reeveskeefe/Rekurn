@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createBlob, hashBlob, serializeBlob } from '../blob.js'
+import { createBlob, hashBlob, serializeBlob, blobHeader } from '../blob.js'
 import { createTree, hashTree, buildTreeFromPaths, serializeTree } from '../tree.js'
 import { createCommit, hashCommit, serializeCommitBody } from '../commit.js'
 import type { CommitData } from '@rekurn/types'
@@ -30,6 +30,17 @@ describe('createBlob', () => {
   it('hashBlob matches createBlob hash', () => {
     const content = Buffer.from('test file content')
     expect(hashBlob(content)).toBe(createBlob(content).hash)
+  })
+
+  it('blobHeader preserves the serialized hash identity contract', async () => {
+    const { createHash } = await import('node:crypto')
+    const content = Buffer.from('streamed file content')
+    const streamed = createHash('sha256')
+      .update(blobHeader(content.length))
+      .update(content)
+      .digest('hex')
+
+    expect(streamed).toBe(hashBlob(content))
   })
 
   it('serializeBlob round-trips', () => {
@@ -117,7 +128,53 @@ describe('buildTreeFromPaths', () => {
     const r2 = buildTreeFromPaths([...entries].reverse())
     expect(r1.rootTree.hash).toBe(r2.rootTree.hash)
   })
+
+  it('matches the legacy recursive grouping hash for nested paths', () => {
+    const entries = [
+      { path: 'z.txt', hash: 'f'.repeat(64), mode: '100644' as const },
+      { path: 'src/index.ts', hash: 'b'.repeat(64), mode: '100644' as const },
+      { path: 'src/lib/repo.ts', hash: 'c'.repeat(64), mode: '100644' as const },
+      { path: 'src/lib/run.ts', hash: 'd'.repeat(64), mode: '100755' as const },
+      { path: 'docs/readme.md', hash: 'e'.repeat(64), mode: '100644' as const },
+    ]
+
+    expect(buildTreeFromPaths(entries).rootTree.hash).toBe(legacyRootHash(entries))
+  })
 })
+
+function legacyRootHash(entries: Array<{ path: string; hash: string; mode: '100644' | '100755' }>): string {
+  return legacySubTree(entries, '').hash
+}
+
+function legacySubTree(
+  entries: Array<{ path: string; hash: string; mode: '100644' | '100755' }>,
+  prefix: string,
+) {
+  const rootEntries: Array<{ mode: '100644' | '100755' | '040000'; name: string; hash: string }> = []
+  const dirGroups = new Map<string, Array<{ path: string; hash: string; mode: '100644' | '100755' }>>()
+
+  for (const entry of entries) {
+    const relative = prefix ? entry.path.slice(prefix.length + 1) : entry.path
+    const slashIdx = relative.indexOf('/')
+
+    if (slashIdx === -1) {
+      rootEntries.push({ mode: entry.mode, name: relative, hash: entry.hash })
+    } else {
+      const dirName = relative.slice(0, slashIdx)
+      const group = dirGroups.get(dirName) ?? []
+      group.push(entry)
+      dirGroups.set(dirName, group)
+    }
+  }
+
+  for (const [dirName, subEntries] of dirGroups) {
+    const subPrefix = prefix ? `${prefix}/${dirName}` : dirName
+    const subTree = legacySubTree(subEntries, subPrefix)
+    rootEntries.push({ mode: '040000', name: dirName, hash: subTree.hash })
+  }
+
+  return createTree(rootEntries)
+}
 
 // ---------------------------------------------------------------------------
 // Commit

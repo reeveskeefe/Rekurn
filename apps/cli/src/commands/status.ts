@@ -1,18 +1,20 @@
-import { existsSync, readdirSync, readFileSync } from 'fs'
+import { existsSync } from 'fs'
+import { stat } from 'fs/promises'
 import { join, relative } from 'path'
-import { hashBlob } from '@rekurn/core'
 import {
   requireRepoRoot,
   readIndex,
-  readObjectFromCache,
   resolveHEAD,
   currentBranch,
   isConflictIndexEntry,
   isResolvedIndexEntry,
   readMergeHead,
+  flattenCommitTree,
 } from '../lib/repo.js'
 import { buildIgnoreMatcher } from '../lib/ignore.js'
 import { printStatus, type StatusEntry } from '../lib/format.js'
+import { defaultFileConcurrency } from '../lib/concurrency.js'
+import { hashFileAsBlob, walkFilePaths } from '../lib/file-objects.js'
 
 export async function statusCommand(): Promise<void> {
   const repoRoot = requireRepoRoot()
@@ -54,32 +56,27 @@ export async function statusCommand(): Promise<void> {
   // -------------------------------------------------------------------------
   const unstaged: StatusEntry[] = []
   const untracked: string[] = []
-  const workingTree = collectWorkingTree(repoRoot, shouldIgnore)
+  const seen = new Set<string>()
+  const pending = new Set<Promise<void>>()
+  const concurrency = defaultFileConcurrency()
 
-  for (const filePath of workingTree) {
-    const relPath = relative(repoRoot, filePath)
-    const indexEntry = index[relPath]
+  for await (const filePath of walkFilePaths(repoRoot, repoRoot, shouldIgnore)) {
+    let task!: Promise<void>
+    task = inspectWorkingFile(filePath).finally(() => pending.delete(task))
+    pending.add(task)
 
-    if (!indexEntry) {
-      untracked.push(relPath)
-    } else if (isConflictIndexEntry(indexEntry)) {
-      continue
-    } else {
-      // Re-hash the file to see if it has changed since staging
-      const content = readFileSync(filePath)
-      const currentHash = hashBlob(content)
-      if (currentHash !== indexEntry.hash) {
-        unstaged.push({ path: relPath, status: 'modified' })
-      }
+    if (pending.size >= concurrency) {
+      await Promise.race(pending)
     }
   }
+
+  await Promise.all(pending)
 
   // Files in index but deleted from working tree
   for (const relPath of Object.keys(index)) {
     const entry = index[relPath]
     if (!entry || isConflictIndexEntry(entry)) continue
-    const fullPath = join(repoRoot, relPath)
-    if (!existsSync(fullPath)) {
+    if (!seen.has(relPath) && !existsSync(join(repoRoot, relPath))) {
       unstaged.push({ path: relPath, status: 'deleted' })
     }
   }
@@ -95,84 +92,39 @@ export async function statusCommand(): Promise<void> {
     mergeHead: readMergeHead(repoRoot),
     conflicts,
   })
+
+  async function inspectWorkingFile(filePath: string): Promise<void> {
+    const relPath = relative(repoRoot, filePath)
+    seen.add(relPath)
+    const indexEntry = index[relPath]
+
+    if (!indexEntry) {
+      untracked.push(relPath)
+    } else if (isConflictIndexEntry(indexEntry)) {
+      return
+    } else {
+      const stats = await stat(filePath)
+      if (stats.size !== indexEntry.size) {
+        unstaged.push({ path: relPath, status: 'modified' })
+        return
+      }
+
+      const currentHash = await hashFileAsBlob(filePath, stats.size)
+      if (currentHash !== indexEntry.hash) {
+        unstaged.push({ path: relPath, status: 'modified' })
+      }
+    }
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function buildHeadTreeMap(repoRoot: string): Promise<Record<string, string>> {
+function buildHeadTreeMap(repoRoot: string): Record<string, string> {
   const headHash = resolveHEAD(repoRoot)
   if (!headHash) return {}
 
-  const commitBuf = readObjectFromCache(repoRoot, headHash)
-  if (!commitBuf) return {}
+  const entries = flattenCommitTree(repoRoot, headHash)
+  if (!entries) return {}
 
-  // Parse the tree hash from the commit body
-  const commitText = commitBuf.toString('utf8')
-  const treeMatch = commitText.match(/tree ([0-9a-f]{64})/)
-  if (!treeMatch) return {}
-
-  const treeHash = treeMatch[1]!
-  const treeMap: Record<string, string> = {}
-  await flattenTree(repoRoot, treeHash, '', treeMap)
-  return treeMap
-}
-
-async function flattenTree(
-  repoRoot: string,
-  treeHash: string,
-  prefix: string,
-  acc: Record<string, string>,
-): Promise<void> {
-  const treeBuf = readObjectFromCache(repoRoot, treeHash)
-  if (!treeBuf) return
-
-  // Parse the tree JSON
-  const raw = treeBuf.toString('utf8')
-  const jsonStart = raw.indexOf('{')
-  if (jsonStart === -1) return
-
-  const treeObj = JSON.parse(raw.slice(jsonStart)) as {
-    type: string
-    entries: Array<{ mode: string; name: string; hash: string }>
-  }
-
-  for (const entry of treeObj.entries) {
-    const entryPath = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.mode === '040000') {
-      await flattenTree(repoRoot, entry.hash, entryPath, acc)
-    } else {
-      acc[entryPath] = entry.hash
-    }
-  }
-}
-
-function collectWorkingTree(
-  repoRoot: string,
-  shouldIgnore: (rel: string) => boolean,
-): string[] {
-  const results: string[] = []
-  walkDir(repoRoot, repoRoot, shouldIgnore, results)
-  return results
-}
-
-function walkDir(
-  dir: string,
-  repoRoot: string,
-  shouldIgnore: (rel: string) => boolean,
-  acc: string[],
-): void {
-  const entries = readdirSync(dir, { withFileTypes: true })
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name)
-    const rel = relative(repoRoot, fullPath)
-    if (shouldIgnore(rel)) continue
-
-    if (entry.isDirectory()) {
-      walkDir(fullPath, repoRoot, shouldIgnore, acc)
-    } else if (entry.isFile()) {
-      acc.push(fullPath)
-    }
-  }
+  const map: Record<string, string> = {}
+  for (const [path, entry] of Object.entries(entries)) map[path] = entry.hash
+  return map
 }
