@@ -21,6 +21,7 @@ import { verifyCommand } from './commands/verify.js'
 import { auditCommand } from './commands/audit.js'
 import { configCommand } from './commands/config.js'
 import { deployCommand, rollbackCommand } from './commands/deploy.js'
+import { remoteCommand } from './commands/remote.js'
 
 const program = new Command()
 
@@ -298,7 +299,15 @@ program
     await logoutCommand()
   })
 
-stub('remote')
+// ---------------------------------------------------------------------------
+// rekurn remote
+// ---------------------------------------------------------------------------
+program
+  .command('remote [args...]')
+  .description('Show or configure the remote Rekurn API target')
+  .action(async (args: string[]) => {
+    await remoteCommand(args)
+  })
 
 // ---------------------------------------------------------------------------
 // rekurn config

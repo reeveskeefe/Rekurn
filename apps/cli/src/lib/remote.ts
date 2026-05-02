@@ -16,6 +16,10 @@ export interface RemoteInfo {
   repoName: string
 }
 
+export interface RemoteSecurityOptions {
+  allowInsecureLocalhost?: boolean
+}
+
 // ---------------------------------------------------------------------------
 // URL parsing / formatting
 // ---------------------------------------------------------------------------
@@ -37,6 +41,28 @@ export function parseRemoteUrl(url: string): RemoteInfo | null {
 
 export function formatRemoteUrl(apiUrl: string, ownerId: string, repoName: string): string {
   return `${apiUrl.replace(/\/$/, '')}/${ownerId}/${repoName}`
+}
+
+export function assertSecureRemote(
+  remote: RemoteInfo,
+  options: RemoteSecurityOptions = {},
+): void {
+  const url = new URL(remote.apiUrl)
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+
+  if (url.username || url.password) {
+    throw new Error('remote URL must not contain embedded credentials')
+  }
+
+  if (url.protocol !== 'https:') {
+    if (!(options.allowInsecureLocalhost && isLocalhost && url.protocol === 'http:')) {
+      throw new Error('remote URL must use HTTPS')
+    }
+  }
+
+  if (!remote.ownerId || !remote.repoName) {
+    throw new Error('remote URL must include owner and repository name')
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -74,4 +100,14 @@ export function setRemote(repoRoot: string, apiUrl: string, ownerId: string, rep
     },
   }
   writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf-8')
+}
+
+export function setRemoteUrl(repoRoot: string, url: string): RemoteInfo {
+  const remote = parseRemoteUrl(url)
+  if (!remote) throw new Error('remote URL must look like https://host/<ownerId>/<repoName>')
+  assertSecureRemote(remote, {
+    allowInsecureLocalhost: process.env.REKURN_ALLOW_INSECURE_REMOTE === '1',
+  })
+  setRemote(repoRoot, remote.apiUrl, remote.ownerId, remote.repoName)
+  return remote
 }

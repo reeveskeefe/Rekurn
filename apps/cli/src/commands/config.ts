@@ -32,9 +32,22 @@ export async function configCommand(args: string[]): Promise<void> {
     return
   }
 
+  if (subcommand === 'signing-key') {
+    if (!key) {
+      console.error(chalk.red('usage: rekurn config signing-key <path-to-ed25519-secret-key>'))
+      process.exit(1)
+    }
+
+    const config = readConfig(repoRoot)
+    writeLocalConfig(repoRoot, { ...config, signingKey: key })
+    console.log(`Signing key set to ${chalk.dim(key)}.`)
+    return
+  }
+
   if (subcommand === 'list' || !subcommand) {
     const config = readConfig(repoRoot)
     const hooks = config.deployHooks ?? {}
+    if (config.signingKey) console.log(`signingKey ${chalk.dim(config.signingKey)}`)
     if (Object.keys(hooks).length === 0) {
       console.log(chalk.dim('No deploy hooks configured.'))
     } else {

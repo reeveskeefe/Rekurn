@@ -16,6 +16,9 @@
 
 import chalk from 'chalk'
 import { basename } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { derivePublicKey, sign } from '@rekurn/crypto'
 import { loadCredentials } from '../lib/credentials.js'
 import {
   requireRepoRoot,
@@ -23,14 +26,16 @@ import {
   resolveHEAD,
   readObjectFromCache,
   writeRef,
+  readConfig,
 } from '../lib/repo.js'
-import { getRemote, setRemote, formatRemoteUrl } from '../lib/remote.js'
+import { assertSecureRemote, getRemote, setRemote, formatRemoteUrl } from '../lib/remote.js'
 import {
   getRemoteRefs,
   collectObjectsForPush,
   getMissingFromRemote,
   uploadObject,
   updateRemoteRef,
+  type PushCertificate,
 } from '../lib/transfer.js'
 
 export async function pushCommand(
@@ -39,6 +44,7 @@ export async function pushCommand(
 ): Promise<void> {
   const repoRoot = requireRepoRoot()
   const creds = loadCredentials()
+  const allowInsecureLocalhost = process.env.REKURN_ALLOW_INSECURE_REMOTE === '1'
 
   if (!creds) {
     console.error(chalk.red('Not logged in. Run "rekurn login" first.'))
@@ -64,6 +70,14 @@ export async function pushCommand(
       process.exit(1)
     }
 
+    const apiRemote = { apiUrl: creds.apiUrl, ownerId: creds.userId, repoName: basename(repoRoot) }
+    try {
+      assertSecureRemote(apiRemote, { allowInsecureLocalhost })
+    } catch (err) {
+      console.error(chalk.red(`Refusing insecure remote: ${err instanceof Error ? err.message : String(err)}`))
+      process.exit(1)
+    }
+
     // Auto-create repo on server using the local directory name
     const repoName = basename(repoRoot)
     const createRes = await fetch(`${creds.apiUrl}/api/v1/repos`, {
@@ -86,6 +100,14 @@ export async function pushCommand(
 
     const repoUrl = formatRemoteUrl(creds.apiUrl, creds.userId, repoName)
     console.log(chalk.green(`Created remote repository: ${repoUrl}`))
+  }
+
+  try {
+    assertSecureRemote(remote, { allowInsecureLocalhost })
+  } catch (err) {
+    console.error(chalk.red(`Refusing insecure remote: ${err instanceof Error ? err.message : String(err)}`))
+    console.error(chalk.dim('  Use HTTPS, or set REKURN_ALLOW_INSECURE_REMOTE=1 for localhost development only.'))
+    process.exit(1)
   }
 
   // ----- Get current remote hash for this branch -----
@@ -125,7 +147,15 @@ export async function pushCommand(
   }
 
   // ----- Update remote ref (CAS) -----
-  await updateRemoteRef(remote, creds.token, `heads/${branch}`, localHash, remoteHash)
+  const refName = `heads/${branch}`
+  let pushCertificate: PushCertificate | undefined
+  try {
+    pushCertificate = buildPushCertificate(repoRoot, refName, remoteHash, localHash, creds.email)
+  } catch (err) {
+    console.error(chalk.red(`Failed to create signed push certificate: ${err instanceof Error ? err.message : String(err)}`))
+    process.exit(1)
+  }
+  await updateRemoteRef(remote, creds.token, refName, localHash, remoteHash, pushCertificate)
 
   // ----- Update local tracking ref -----
   writeRef(repoRoot, `refs/remotes/origin/${branch}`, localHash)
@@ -135,4 +165,47 @@ export async function pushCommand(
     : localHash.slice(0, 7)
   console.log(chalk.green(`\nTo ${formatRemoteUrl(remote.apiUrl, remote.ownerId, remote.repoName)}`))
   console.log(`  ${branch} -> ${branch}  (${arrow})`)
+  if (pushCertificate) console.log(chalk.dim('  signed push certificate attached'))
+}
+
+function buildPushCertificate(
+  repoRoot: string,
+  refName: string,
+  oldHash: string | null,
+  newHash: string,
+  pusher: string,
+): PushCertificate | undefined {
+  const config = readConfig(repoRoot)
+  if (!config.signingKey) return undefined
+
+  let secretKey: string
+  try {
+    secretKey = readFileSync(config.signingKey, 'utf8').trim()
+  } catch {
+    throw new Error(`signing key not found: ${config.signingKey}`)
+  }
+  if (!/^[0-9a-f]{64}$/i.test(secretKey)) {
+    throw new Error('signing key must be a 64-character Ed25519 secret key seed in hex')
+  }
+  const payload: PushCertificate['payload'] = {
+    refName,
+    oldHash,
+    newHash,
+    pusher,
+    timestamp: Math.floor(Date.now() / 1000),
+    nonce: randomBytes(16).toString('hex'),
+  }
+  const message = Buffer.from(canonicalJson(payload), 'utf8')
+  return {
+    payload,
+    signature: sign(message, secretKey),
+    publicKey: derivePublicKey(secretKey),
+  }
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  const obj = value as Record<string, unknown>
+  return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(obj[key])}`).join(',')}}`
 }

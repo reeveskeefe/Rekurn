@@ -22,6 +22,7 @@ import {
   accessErrorResponse,
 } from '../../../../../../../../lib/repo-access'
 import { randomUUID } from 'node:crypto'
+import { verifySignature } from '@rekurn/crypto'
 
 const HashRegex = /^[0-9a-f]{64}$/
 
@@ -31,9 +32,21 @@ const UpdateRefSchema = z.object({
   /** If provided, only update if current value equals expectedHash. Use null to assert non-existence. */
   expectedHash: z
     .string()
-    .regex(HashRegex)
-    .nullable()
-    .optional(),
+      .regex(HashRegex)
+      .nullable()
+      .optional(),
+  pushCertificate: z.object({
+    payload: z.object({
+      refName: z.string().min(1),
+      oldHash: z.string().regex(HashRegex).nullable(),
+      newHash: z.string().regex(HashRegex),
+      pusher: z.string().email(),
+      timestamp: z.number().int(),
+      nonce: z.string().regex(/^[0-9a-f]{32}$/),
+    }),
+    signature: z.string().regex(/^[0-9a-f]{128}$/),
+    publicKey: z.string().regex(/^[0-9a-f]{64}$/),
+  }).optional(),
 })
 
 interface RouteParams {
@@ -56,7 +69,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     )
   }
 
-  const { commitHash, expectedHash, isImmutable } = parsed.data
+  const { commitHash, expectedHash, isImmutable, pushCertificate } = parsed.data
 
   try {
     const repo = await requireWriteAccess(session.user.id, ownerId, name)
@@ -69,6 +82,17 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       .limit(1)
 
     const currentHash = existing[0]?.commitHash ?? null
+
+    if (pushCertificate) {
+      const certError = validatePushCertificate(
+        pushCertificate,
+        fullRefName,
+        currentHash,
+        commitHash,
+        session.user.email,
+      )
+      if (certError) return NextResponse.json({ error: certError }, { status: 400 })
+    }
 
     // CAS check
     if (expectedHash !== undefined) {
@@ -133,6 +157,39 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     )
   }
+}
+
+function validatePushCertificate(
+  cert: z.infer<typeof UpdateRefSchema>['pushCertificate'],
+  refName: string,
+  currentHash: string | null,
+  commitHash: string,
+  sessionEmail: string,
+): string | null {
+  if (!cert) return null
+  const { payload } = cert
+
+  if (payload.refName !== refName) return 'Push certificate ref does not match request ref'
+  if (payload.oldHash !== currentHash) return 'Push certificate old hash does not match current ref'
+  if (payload.newHash !== commitHash) return 'Push certificate new hash does not match request commit'
+  if (payload.pusher !== sessionEmail) return 'Push certificate pusher does not match authenticated user'
+
+  const now = Math.floor(Date.now() / 1000)
+  if (Math.abs(now - payload.timestamp) > 300) return 'Push certificate timestamp is outside the allowed window'
+
+  const ok = verifySignature(
+    Buffer.from(canonicalJson(payload), 'utf8'),
+    cert.signature,
+    cert.publicKey,
+  )
+  return ok ? null : 'Push certificate signature is invalid'
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  const obj = value as Record<string, unknown>
+  return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(obj[key])}`).join(',')}}`
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {

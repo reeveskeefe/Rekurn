@@ -1,15 +1,15 @@
-# @rekurn/sdk
+# @reeveskeefe/rekurn-sdk
 
 Install:
 
 ```bash
-npm install @rekurn/sdk
+npm install @reeveskeefe/rekurn-sdk
 ```
 
 Use:
 
 ```ts
-import { RekurnClient } from '@rekurn/sdk'
+import { RekurnClient } from '@reeveskeefe/rekurn-sdk'
 
 const rekurn = new RekurnClient({
   baseUrl: 'https://api.rekurn.com',

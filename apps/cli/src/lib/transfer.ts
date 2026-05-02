@@ -45,6 +45,19 @@ export interface RemoteRef {
   isImmutable: boolean
 }
 
+export interface PushCertificate {
+  payload: {
+    refName: string
+    oldHash: string | null
+    newHash: string
+    pusher: string
+    timestamp: number
+    nonce: string
+  }
+  signature: string
+  publicKey: string
+}
+
 /** Fetch all refs for a remote repository. Returns [] on error. */
 export async function getRemoteRefs(info: RemoteInfo, token: string): Promise<RemoteRef[]> {
   try {
@@ -69,10 +82,12 @@ export async function updateRemoteRef(
   refName: string,           // e.g. "heads/main"
   commitHash: string,
   expectedHash?: string | null,
+  pushCertificate?: PushCertificate,
 ): Promise<void> {
   const url = `${repoBase(info)}/refs/${refName}`
   const body: Record<string, unknown> = { commitHash }
   if (expectedHash !== undefined) body.expectedHash = expectedHash
+  if (pushCertificate) body.pushCertificate = pushCertificate
 
   const res = await fetch(url, {
     method: 'PUT',

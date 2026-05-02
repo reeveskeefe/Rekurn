@@ -1,11 +1,11 @@
 # Rekurn TypeScript SDK
 
 ```bash
-pnpm add @rekurn/sdk
+pnpm add @reeveskeefe/rekurn-sdk
 ```
 
 ```ts
-import { RekurnClient } from '@rekurn/sdk'
+import { RekurnClient } from '@reeveskeefe/rekurn-sdk'
 
 const rekurn = new RekurnClient({
   baseUrl: 'https://api.rekurn.com',
@@ -24,4 +24,4 @@ The SDK is fetch-only, ESM, tree-shakable, and enforces HTTPS unless `allowInsec
 Rekurn is distributed as two npm packages:
 
 - `rekurn`: the CLI, installed with `npm install -g rekurn` or run with `npx rekurn`.
-- `@rekurn/sdk`: the programmatic TypeScript SDK, installed with `npm install @rekurn/sdk`.
+- `@reeveskeefe/rekurn-sdk`: the programmatic TypeScript SDK, installed with `npm install @reeveskeefe/rekurn-sdk`.

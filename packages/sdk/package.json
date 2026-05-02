@@ -1,5 +1,5 @@
 {
-  "name": "@rekurn/sdk",
+  "name": "@reeveskeefe/rekurn-sdk",
   "version": "0.1.0",
   "type": "module",
   "description": "Rekurn TypeScript SDK — build your own UI on top of the Rekurn API.",

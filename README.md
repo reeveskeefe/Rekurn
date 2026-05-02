@@ -23,7 +23,7 @@ npx rekurn --help
 Install the SDK:
 
 ```bash
-npm install @rekurn/sdk
+npm install @reeveskeefe/rekurn-sdk
 ```
 
 API reference:
@@ -47,6 +47,21 @@ rekurn branch feature
 rekurn return feature
 rekurn log --oneline
 rekurn timeline
+```
+
+Configure a remote and push securely:
+
+```bash
+rekurn login
+rekurn remote set https://api.example.com/<owner-id>/<repo-name>
+rekurn push origin main
+```
+
+For signed push certificates, configure an Ed25519 secret key seed:
+
+```bash
+rekurn config signing-key ~/.rekurn/keys/push-ed25519
+rekurn push origin main
 ```
 
 Create immutable snapshots:
@@ -79,7 +94,7 @@ rekurn rollback @v1.0.0
 ## SDK
 
 ```ts
-import { RekurnClient } from '@rekurn/sdk'
+import { RekurnClient } from '@reeveskeefe/rekurn-sdk'
 
 const rekurn = new RekurnClient({
   baseUrl: 'https://api.rekurn.com',
@@ -94,7 +109,7 @@ The SDK is ESM, dependency-free at runtime, tree-shakable, and includes TypeScri
 ## Packages
 
 - rekurn: the CLI package for global installs and npx.
-- @rekurn/sdk: the TypeScript SDK for applications and integrations.
+- @reeveskeefe/rekurn-sdk: the TypeScript SDK for applications and integrations.
 
 The monorepo also contains internal packages for core object handling, crypto, diffing, API routes, and database schema.
 
@@ -103,7 +118,9 @@ The monorepo also contains internal packages for core object handling, crypto, d
 
 Rekurn uses content-addressed objects and verifies object hashes before storage. Sensitive operations such as object upload, ref updates, deploy hook updates, and deployment recording require write access. Public API routes are rate-limited, and SDK clients should keep tokens in environment variables or a platform secret store.
 
-Do not commit API tokens, deploy hooks, private keys, or production `.rekurn/config` files.
+Push uses bearer-token authentication, HTTPS remote enforcement, compare-and-swap ref updates, object hash validation, and optional Ed25519 signed push certificates. Localhost HTTP remotes are only allowed when `REKURN_ALLOW_INSECURE_REMOTE=1` is set for development.
+
+Do not commit API tokens, deploy hooks, private keys, signing keys, or production `.rekurn/config` files.
 
 ## Development and Contributing
 
@@ -128,7 +145,7 @@ pnpm test
 Build publishable packages before release or when changing CLI/SDK packaging:
 
 pnpm --filter rekurn build
-pnpm --filter @rekurn/sdk build
+pnpm --filter @reeveskeefe/rekurn-sdk build
 
 
 ## License
