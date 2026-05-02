@@ -1,13 +1,60 @@
-import type {
-  AuditEvent,
-  CommitObject,
-  DeploymentRecord,
-  ObjectDownload,
-  Ref,
-  RepoSummary,
-} from '@rekurn/types'
+export interface Identity {
+  name: string
+  email: string
+  timestamp: number
+}
 
-export type { AuditEvent, CommitObject, DeploymentRecord, ObjectDownload, Ref, RepoSummary } from '@rekurn/types'
+export interface CommitObject {
+  type: 'commit'
+  hash: string
+  treeHash: string
+  parentHashes: string[]
+  author: Identity
+  committer: Identity
+  message: string
+  signature?: string
+}
+
+export interface Ref {
+  name: string
+  commitHash: string
+  type: 'branch' | 'tag'
+  isImmutable: boolean
+}
+
+export interface RepoSummary {
+  name: string
+  description: string | null
+  visibility: 'public' | 'private'
+  defaultBranch: string
+  deployHooks?: Record<string, string>
+  createdAt: string
+}
+
+export interface DeploymentRecord {
+  commitHash: string
+  env: 'production' | 'preview' | 'staging'
+  status: 'pending' | 'building' | 'ready' | 'error' | 'cancelled'
+  vercelUrl?: string | null
+  vercelDeploymentId?: string | null
+  notes?: string | null
+  createdAt: string
+}
+
+export interface ObjectDownload {
+  hash: string
+  type: 'blob' | 'tree' | 'commit'
+  size: number
+  data: string
+}
+
+export interface AuditEvent {
+  action: string
+  meta: unknown
+  ip: string | null
+  createdAt: string
+  userId: string | null
+}
 
 export interface RekurnClientOptions {
   /** Base URL of the Rekurn API origin, e.g. "https://api.rekurn.com". */
@@ -79,7 +126,10 @@ export class RekurnClient {
 
   constructor(options: RekurnClientOptions) {
     const url = new URL(options.baseUrl)
-    if (url.protocol !== 'https:' && !(options.allowInsecureHttp && url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+    const localHttpAllowed =
+      options.allowInsecureHttp === true &&
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+    if (url.protocol !== 'https:' && !localHttpAllowed) {
       throw new Error('RekurnClient requires HTTPS baseUrl unless allowInsecureHttp is enabled for localhost')
     }
 

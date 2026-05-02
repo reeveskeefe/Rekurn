@@ -18,3 +18,10 @@ const commit = await rekurn.commits.get('owner-user-id', 'my-repo', refs.refs[0]
 ```
 
 The SDK is fetch-only, ESM, tree-shakable, and enforces HTTPS unless `allowInsecureHttp` is enabled for localhost development.
+
+## Published Packages
+
+Rekurn is distributed as two npm packages:
+
+- `rekurn`: the CLI, installed with `npm install -g rekurn` or run with `npx rekurn`.
+- `@rekurn/sdk`: the programmatic TypeScript SDK, installed with `npm install @rekurn/sdk`.

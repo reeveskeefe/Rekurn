@@ -9,5 +9,6 @@ export default defineConfig({
   },
   clean: true,
   shims: true,
-  sourcemap: true,
+  sourcemap: false,
+  noExternal: [/^@rekurn\//, /^@noble\//],
 })

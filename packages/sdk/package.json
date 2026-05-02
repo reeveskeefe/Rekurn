@@ -3,6 +3,22 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Rekurn TypeScript SDK — build your own UI on top of the Rekurn API.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/reeveskeefe/Rekurn#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reeveskeefe/Rekurn.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/reeveskeefe/Rekurn/issues"
+  },
+  "keywords": [
+    "rekurn",
+    "version-control",
+    "sdk",
+    "typescript"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -10,14 +26,17 @@
     }
   },
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --minify",
     "type-check": "tsc --noEmit"
   },
-  "dependencies": {
-    "@rekurn/types": "workspace:*"
-  },
+  "dependencies": {},
   "devDependencies": {
     "tsup": "^8.3.0",
     "typescript": "^5.7.0"
