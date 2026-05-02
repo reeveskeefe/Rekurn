@@ -50,3 +50,20 @@ export async function apiDelete(path: string, init?: RequestInit): Promise<Respo
     },
   })
 }
+
+export async function apiPut(
+  path: string,
+  body?: unknown,
+  init?: RequestInit,
+): Promise<Response> {
+  return fetch(`${apiUrl()}${path}`, {
+    ...init,
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+      ...(init?.headers as Record<string, string> | undefined),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+}

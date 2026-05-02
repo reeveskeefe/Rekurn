@@ -1,9 +1,14 @@
 /**
  * Remote URL helpers for the Rekurn CLI.
  *
- * Remote URLs have the form:  https://<api-host>/<userId>/<repoName>
+ * Remote URLs have the form:  https://<host>/<owner>/<repoName>
  *
- * Example:  https://api.rekurn.com/a1b2c3d4-uuid/myproject
+ * <owner> may be either a username slug (e.g. "keefe") or a raw Better Auth
+ * UUID.  The server resolves both — the CLI stores whatever the user typed.
+ *
+ * Examples:
+ *   https://api.rekurn.com/keefe/myproject       ← pretty username URL
+ *   https://api.rekurn.com/a1b2c3d4-uuid/myproject ← UUID fallback
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'

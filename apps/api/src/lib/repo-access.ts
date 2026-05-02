@@ -5,7 +5,7 @@
  * Route handlers catch these and convert them to JSON responses.
  */
 
-import { db, repos } from '@rekurn/db'
+import { db, repos, users } from '@rekurn/db'
 import { eq, and } from 'drizzle-orm'
 
 export interface RepoRecord {
@@ -29,6 +29,23 @@ function fail(status: number, message: string): never {
   throw { status, message } as AccessError
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Resolve a URL segment that may be either a raw UUID or a username slug.
+ * Always returns the underlying user UUID, or throws 404.
+ */
+export async function resolveOwnerId(ownerIdOrUsername: string): Promise<string> {
+  if (UUID_RE.test(ownerIdOrUsername)) return ownerIdOrUsername
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.username, ownerIdOrUsername.toLowerCase()))
+    .limit(1)
+  if (rows.length === 0) fail(404, `User '${ownerIdOrUsername}' not found`)
+  return rows[0]!.id
+}
+
 /** Look up a repo by ownerId + name. Returns null if not found. */
 export async function getRepo(ownerId: string, name: string): Promise<RepoRecord | null> {
   const rows = await db
@@ -42,15 +59,16 @@ export async function getRepo(ownerId: string, name: string): Promise<RepoRecord
 }
 
 /**
- * Require read access.
+ * Require read access.  `ownerIdOrSlug` may be a UUID or a username.
  * - Public repos: any caller (even unauthenticated).
  * - Private repos: only the owner.
  */
 export async function requireReadAccess(
   userId: string | null,
-  ownerId: string,
+  ownerIdOrSlug: string,
   name: string,
 ): Promise<RepoRecord> {
+  const ownerId = await resolveOwnerId(ownerIdOrSlug)
   const repo = await getRepo(ownerId, name)
   if (!repo) fail(404, 'Repository not found')
   if (repo.visibility === 'private' && repo.ownerId !== userId) {
@@ -60,14 +78,15 @@ export async function requireReadAccess(
 }
 
 /**
- * Require write access.
+ * Require write access.  `ownerIdOrSlug` may be a UUID or a username.
  * Only the repo owner may write.
  */
 export async function requireWriteAccess(
   userId: string,
-  ownerId: string,
+  ownerIdOrSlug: string,
   name: string,
 ): Promise<RepoRecord> {
+  const ownerId = await resolveOwnerId(ownerIdOrSlug)
   const repo = await getRepo(ownerId, name)
   if (!repo) fail(404, 'Repository not found')
   if (repo.ownerId !== userId) fail(403, 'Permission denied')

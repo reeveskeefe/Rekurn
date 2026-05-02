@@ -22,6 +22,7 @@ import { auditCommand } from './commands/audit.js'
 import { configCommand } from './commands/config.js'
 import { deployCommand, rollbackCommand } from './commands/deploy.js'
 import { remoteCommand } from './commands/remote.js'
+import { usernameCommand } from './commands/username.js'
 
 const program = new Command()
 
@@ -307,6 +308,16 @@ program
   .description('Show or configure the remote Rekurn API target')
   .action(async (args: string[]) => {
     await remoteCommand(args)
+  })
+
+// ---------------------------------------------------------------------------
+// rekurn username
+// ---------------------------------------------------------------------------
+program
+  .command('username [handle]')
+  .description('Show or set your username for pretty repo URLs: <host>/<username>/<repo>')
+  .action(async (handle?: string) => {
+    await usernameCommand(handle)
   })
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,12 @@ export const users = pgTable('users', {
   name: text('name').notNull().default(''),
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
+  /**
+   * Human-readable handle used in repo URLs: <host>/<username>/<repo>.
+   * Unique, lowercase letters/numbers/hyphens only. Optional — UUID is
+   * always accepted as a fallback.
+   */
+  username: text('username').unique(),
   /** Optional profile image URL. */
   image: text('image'),
   /** Hex-encoded Ed25519 public key for commit signing (optional). */
