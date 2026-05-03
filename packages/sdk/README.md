@@ -12,7 +12,7 @@ Use:
 import { RekurnClient } from '@reeveskeefe/rekurn-sdk'
 
 const rekurn = new RekurnClient({
-  baseUrl: 'https://api.rekurn.com',
+  baseUrl: 'https://youe-site.com',
   token: process.env.REKURN_TOKEN,
 })
 
