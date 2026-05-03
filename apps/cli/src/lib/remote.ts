@@ -109,7 +109,7 @@ export function setRemote(repoRoot: string, apiUrl: string, ownerId: string, rep
 
 export function setRemoteUrl(repoRoot: string, url: string): RemoteInfo {
   const remote = parseRemoteUrl(url)
-  if (!remote) throw new Error('remote URL must look like https://host/<ownerId>/<repoName>')
+  if (!remote) throw new Error('remote URL must look like https://api.your-site.com/<username>/<repo-name>')
   assertSecureRemote(remote, {
     allowInsecureLocalhost: process.env.REKURN_ALLOW_INSECURE_REMOTE === '1',
   })

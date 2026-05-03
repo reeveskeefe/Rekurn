@@ -30,8 +30,8 @@ export const auth = betterAuth({
       sendMagicLink: async ({ email, url }) => {
         const resend = getResend()
         if (!resend) {
-          // Dev fallback — log the link to the console
-          console.log(`[DEV] Magic link for ${email}:\n${url}`)
+          // Dev fallback — never log the URL as it acts as a credential
+          console.log(`[DEV] Magic link sent to ${email} — set RESEND_API_KEY to enable real email delivery`)
           return
         }
         const from =

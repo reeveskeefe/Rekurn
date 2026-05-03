@@ -30,7 +30,7 @@ const program = new Command()
 program
   .name('rekurn')
   .description('Rekurn — Return to any version instantly.')
-  .version('0.1.0')
+  .version('0.2.2')
 
 // ---------------------------------------------------------------------------
 // rekurn init
@@ -113,7 +113,7 @@ const stub = (name: string) =>
     .allowUnknownOption()
     .action(() => {
       console.error(`'rekurn ${name}' is not yet implemented in this version.`)
-      console.error(`Follow https://oreulius.com/rekurn for updates.`)
+      console.error(`Follow https://github.com/reeveskeefe/Rekurn for updates.`)
       process.exit(1)
     })
 

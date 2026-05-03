@@ -27,7 +27,12 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/v1/auth/passkey/authenticate')
 
   if (isPublic) {
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+    // Only trust X-Forwarded-For when a trusted proxy is explicitly configured
+    const trustedProxy = process.env.TRUSTED_PROXY ?? ''
+    const remoteIp = request.headers.get('x-real-ip') ?? 'direct'
+    const ip = trustedProxy
+      ? (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? remoteIp)
+      : remoteIp
     const limited = rateLimit(`${ip}:${pathname}`, 60, 60_000)
     if (!limited.ok) {
       return NextResponse.json(

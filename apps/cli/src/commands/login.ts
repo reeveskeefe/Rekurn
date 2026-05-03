@@ -20,16 +20,58 @@
  *   6. CLI validates state, saves credentials, prints success.
  */
 import http from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import chalk from 'chalk'
 import { saveCredentials, loadCredentials } from '../lib/credentials.js'
+
+// ---------------------------------------------------------------------------
+// URL validation — blocks SSRF to private/internal networks
+// ---------------------------------------------------------------------------
+function validateApiUrl(raw: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error('Invalid URL — please enter a full URL like https://api.your-site.com')
+  }
+
+  const hostname = parsed.hostname.toLowerCase()
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1'
+
+  if (parsed.protocol !== 'https:') {
+    if (!(isLocalhost && parsed.protocol === 'http:')) {
+      throw new Error('URL must use HTTPS (e.g. https://api.your-site.com)')
+    }
+  }
+
+  if (!isLocalhost) {
+    const privatePatterns = [
+      /^10\./,
+      /^172\.(1[6-9]|2\d|3[01])\./,
+      /^192\.168\./,
+      /^169\.254\./,
+      /^0\./,
+      /^\[?::1\]?$/,
+      /^\[?fc[0-9a-f]{2}:/i,
+      /^\[?fd[0-9a-f]{2}:/i,
+      /^0\.0\.0\.0$/,
+    ]
+    for (const re of privatePatterns) {
+      if (re.test(hostname)) {
+        throw new Error('Cannot connect to a private or reserved IP address')
+      }
+    }
+  }
+
+  return parsed.origin
+}
 
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes (setup wizard needs more time)
 
 // ---------------------------------------------------------------------------
 // Setup wizard HTML — shown when no API URL is configured
 // ---------------------------------------------------------------------------
-function setupPage(port: number): string {
+function setupPage(port: number, serverToken: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -149,12 +191,14 @@ function setupPage(port: number): string {
   </div>
 
   <script>
+    const _serverToken = '${serverToken}'
+
     document.getElementById('setup-form').addEventListener('submit', async function(e) {
       e.preventDefault()
       const url = document.getElementById('api-url').value.trim().replace(/\\/$/, '')
       const errEl = document.getElementById('error')
       errEl.style.display = 'none'
-      if (!url.startsWith('http')) {
+      try { new URL(url) } catch {
         errEl.textContent = 'Please enter a full URL starting with https://'
         errEl.style.display = 'block'
         return
@@ -163,13 +207,13 @@ function setupPage(port: number): string {
         const res = await fetch('http://127.0.0.1:${port}/configure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apiUrl: url })
+          body: JSON.stringify({ apiUrl: url, _st: _serverToken })
         })
         const data = await res.json()
         if (data.loginUrl) {
           window.location.href = data.loginUrl
         } else {
-          errEl.textContent = data.error ?? 'Something went wrong'
+          errEl.textContent = data.error ?? 'Could not connect. Check that the URL is correct and the site is reachable.'
           errEl.style.display = 'block'
         }
       } catch {
@@ -219,6 +263,7 @@ export async function loginCommand(urlArg?: string): Promise<void> {
   )
 
   const state = randomBytes(32).toString('hex')
+  const serverToken = randomBytes(32).toString('hex')
 
   // Start local server on a random available port
   const server = http.createServer()
@@ -258,7 +303,7 @@ export async function loginCommand(urlArg?: string): Promise<void> {
         const reqUrl = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
 
         if (req.method === 'GET' && reqUrl.pathname === '/setup') {
-          res.writeHead(200, { 'Content-Type': 'text/html' }).end(setupPage(port))
+          res.writeHead(200, { 'Content-Type': 'text/html' }).end(setupPage(port, serverToken))
           return
         }
 
@@ -267,13 +312,33 @@ export async function loginCommand(urlArg?: string): Promise<void> {
           req.on('data', (chunk: Buffer) => { body += chunk.toString() })
           req.on('end', () => {
             try {
-              const { apiUrl: submitted } = JSON.parse(body) as { apiUrl?: string }
-              if (!submitted || !submitted.startsWith('http')) {
-                res.writeHead(422, { 'Content-Type': 'application/json' })
-                  .end(JSON.stringify({ error: 'Invalid URL' }))
+              const { apiUrl: submitted, _st } = JSON.parse(body) as { apiUrl?: string; _st?: string }
+
+              // CSRF check
+              const providedToken = Buffer.from(typeof _st === 'string' ? _st : '')
+              const expectedToken = Buffer.from(serverToken)
+              const tokenLengthOk = providedToken.length === expectedToken.length
+              if (!tokenLengthOk || !timingSafeEqual(providedToken, expectedToken)) {
+                res.writeHead(403, { 'Content-Type': 'application/json' })
+                  .end(JSON.stringify({ error: 'Forbidden' }))
                 return
               }
-              const cleanUrl = submitted.replace(/\/$/, '')
+
+              if (!submitted) {
+                res.writeHead(422, { 'Content-Type': 'application/json' })
+                  .end(JSON.stringify({ error: 'URL is required' }))
+                return
+              }
+
+              let cleanUrl: string
+              try {
+                cleanUrl = validateApiUrl(submitted.replace(/\/$/, ''))
+              } catch (e) {
+                res.writeHead(422, { 'Content-Type': 'application/json' })
+                  .end(JSON.stringify({ error: e instanceof Error ? e.message : 'Invalid URL' }))
+                return
+              }
+
               const loginUrl = `${cleanUrl}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
               res.writeHead(200, { 'Content-Type': 'application/json' })
                 .end(JSON.stringify({ loginUrl }))
@@ -295,7 +360,7 @@ export async function loginCommand(urlArg?: string): Promise<void> {
     })
 
     console.log(chalk.dim(`API URL configured: ${apiUrl}`))
-    console.log(chalk.cyan('Opening login page…'))
+    console.log(chalk.cyan('Redirecting to login page…'))
   } else {
     apiUrl = knownUrl.replace(/\/$/, '')
     const loginUrl = `${apiUrl}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
@@ -310,16 +375,9 @@ export async function loginCommand(urlArg?: string): Promise<void> {
   // ---------------------------------------------------------------------------
   // Wait for the auth callback
   // ---------------------------------------------------------------------------
-  const loginUrl = `${apiUrl}/auth/cli-login?callback=${encodeURIComponent(callbackBase)}&state=${encodeURIComponent(state)}`
 
-  // If we just came from the setup wizard, open the login URL now
-  if (!knownUrl) {
-    try {
-      const { default: open } = await import('open')
-      await open(loginUrl)
-    } catch { /* user has the fallback URL */ }
-    console.log(chalk.dim(`If your browser did not open:\n  ${loginUrl}\n`))
-  }
+  // For the returning-user path (no setup wizard), the browser is already open.
+  // For the first-time path, the wizard form navigated the browser to loginUrl.
 
   const token = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {

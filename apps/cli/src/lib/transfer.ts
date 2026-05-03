@@ -7,6 +7,7 @@
 
 import { parseCommit, parseTree, detectObjectType } from '@rekurn/core'
 import { readObjectFromCache, writeObjectToCache } from './repo.js'
+import { createHash } from 'node:crypto'
 import type { RemoteInfo } from './remote.js'
 import { mapLimit } from './concurrency.js'
 
@@ -421,6 +422,13 @@ export async function fetchObjects(
       const bytes = objects.get(hash)
       if (!bytes) {
         console.warn(`  warn: object ${hash.slice(0, 12)}... not found on remote`)
+        continue
+      }
+
+      // Verify integrity before caching
+      const actual = createHash('sha256').update(bytes).digest('hex')
+      if (actual !== hash) {
+        console.warn(`  warn: object ${hash.slice(0, 12)}... hash mismatch — skipping`)
         continue
       }
 

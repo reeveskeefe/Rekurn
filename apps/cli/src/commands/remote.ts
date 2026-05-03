@@ -31,7 +31,7 @@ export async function remoteCommand(args: string[]): Promise<void> {
     const remote = getRemote(repoRoot)
     if (!remote) {
       console.log(chalk.dim('No remote configured.'))
-      console.log(chalk.dim('  Run: rekurn remote set https://host/<ownerId>/<repoName>'))
+      console.log(chalk.dim('  Run: rekurn remote set https://api.your-site.com/<username>/<repo-name>'))
       return
     }
     try {
