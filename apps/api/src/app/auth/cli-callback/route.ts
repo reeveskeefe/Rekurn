@@ -72,10 +72,35 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Forward token + state to the CLI's local callback server
-  const redirectTo = new URL(callback)
-  redirectTo.searchParams.set('token', session.session.token)
-  redirectTo.searchParams.set('state', state)
+  // Forward token + state to the CLI's local callback server via a self-submitting
+  // POST form — keeps the session token out of the browser URL bar and history.
+  function escAttr(s: string) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  }
 
-  return NextResponse.redirect(redirectTo.toString())
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Rekurn — Completing login…</title>
+  <style>
+    body { font-family: sans-serif; background: #0d0d10; color: #4ade80;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    p { color: #aaa; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <p>Completing login… you can close this tab in a moment.</p>
+  <form id="f" method="POST" action="${escAttr(callback)}">
+    <input type="hidden" name="token" value="${escAttr(session.session.token)}" />
+    <input type="hidden" name="state" value="${escAttr(state)}" />
+  </form>
+  <script>document.getElementById('f').submit();</script>
+</body>
+</html>`
+
+  return new NextResponse(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  })
 }

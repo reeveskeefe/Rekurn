@@ -80,7 +80,14 @@ export function readRef(repoRoot: string, refName: string): string | null {
 }
 
 export function writeRef(repoRoot: string, refName: string, hash: string): void {
-  const refPath = join(rekurnDir(repoRoot), refName)
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error('invalid ref hash')
+  const dir = rekurnDir(repoRoot)
+  const refPath = join(dir, refName)
+  // Prevent path traversal — resolved path must remain inside .rekurn/
+  const allowedPrefix = dir.endsWith('/') ? dir : dir + '/'
+  if (!refPath.startsWith(allowedPrefix)) {
+    throw new Error(`path traversal detected in ref name: ${refName}`)
+  }
   mkdirSync(dirname(refPath), { recursive: true })
   writeFileSync(refPath, hash + '\n', 'utf8')
 }
@@ -290,6 +297,8 @@ function readConfigFile(p: string): Partial<RepoConfig> {
 function deepMerge<T extends object>(base: T, override: Partial<T>): T {
   const result = { ...base }
   for (const key of Object.keys(override) as Array<keyof T>) {
+    // Guard against prototype pollution via __proto__ / constructor keys
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
     const ov = override[key]
     if (ov !== undefined) {
       if (typeof ov === 'object' && ov !== null && !Array.isArray(ov)) {

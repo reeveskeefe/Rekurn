@@ -85,7 +85,23 @@ export async function getObjectBytes(hash: string): Promise<Buffer | null> {
 
   if (rows.length === 0 || !rows[0].blobUrl) return null
 
-  const res = await fetch(rows[0].blobUrl)
+  // Guard against SSRF: only fetch from expected Vercel Blob domains
+  const blobUrl = rows[0].blobUrl
+  try {
+    const parsed = new URL(blobUrl)
+    const isVercelBlob =
+      parsed.protocol === 'https:' &&
+      (parsed.hostname.endsWith('.public.blob.vercel-storage.com') ||
+       parsed.hostname.endsWith('.private.blob.vercel-storage.com'))
+    if (!isVercelBlob) {
+      console.error('[objects] Refusing to fetch suspicious blobUrl:', blobUrl)
+      return null
+    }
+  } catch {
+    return null
+  }
+
+  const res = await fetch(blobUrl)
   if (!res.ok) return null
 
   return Buffer.from(await res.arrayBuffer())

@@ -18,9 +18,10 @@ import {
 } from '../../../../../../../../lib/repo-access'
 
 const FETCH_CONCURRENCY = 8
+const MAX_BATCH_RESPONSE_BYTES = 500 * 1024 * 1024 // 500 MB cap per batch response
 
 const BatchFetchSchema = z.object({
-  hashes: z.array(z.string().length(64).regex(/^[0-9a-f]{64}$/)).min(1).max(5_000),
+  hashes: z.array(z.string().length(64).regex(/^[0-9a-f]{64}$/)).min(1).max(500),
 })
 
 interface RouteParams {
@@ -50,8 +51,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const objects: Array<{ hash: string; data: string }> = []
     const missing: string[] = []
+    let totalResponseBytes = 0
     for (const row of rows) {
       if (row.bytes) {
+        totalResponseBytes += row.bytes.length
+        if (totalResponseBytes > MAX_BATCH_RESPONSE_BYTES) {
+          return NextResponse.json(
+            { error: 'Batch response too large — request fewer objects at a time' },
+            { status: 413 },
+          )
+        }
         objects.push({ hash: row.hash, data: row.bytes.toString('base64') })
       } else {
         missing.push(row.hash)

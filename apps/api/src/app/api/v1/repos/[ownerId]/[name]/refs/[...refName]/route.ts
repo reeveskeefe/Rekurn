@@ -60,6 +60,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
   const fullRefName = refName.join('/')
 
+  // Validate ref name format before any DB access
+  const VALID_REF = /^(heads|tags)\/[a-zA-Z0-9][a-zA-Z0-9._\-/]{0,198}$/
+  if (!VALID_REF.test(fullRefName)) {
+    return NextResponse.json({ error: 'Invalid ref name' }, { status: 400 })
+  }
+
   const body: unknown = await request.json()
   const parsed = UpdateRefSchema.safeParse(body)
   if (!parsed.success) {
@@ -198,6 +204,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const fullRefName = refName.join('/')
+
+  // Validate ref name format before any DB access
+  const VALID_REF = /^(heads|tags)\/[a-zA-Z0-9][a-zA-Z0-9._\-/]{0,198}$/
+  if (!VALID_REF.test(fullRefName)) {
+    return NextResponse.json({ error: 'Invalid ref name' }, { status: 400 })
+  }
 
   try {
     const repo = await requireWriteAccess(session.user.id, ownerId, name)

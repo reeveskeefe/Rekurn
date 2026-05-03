@@ -52,6 +52,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Per-user rate limiting on authenticated routes (300 req / minute)
+  const authLimited = rateLimit(`user:${session.user.id}:${pathname}`, 300, 60_000)
+  if (!authLimited.ok) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(authLimited.retryAfter) },
+      },
+    )
+  }
+
   return NextResponse.next()
 }
 

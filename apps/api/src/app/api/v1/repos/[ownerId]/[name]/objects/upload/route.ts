@@ -20,10 +20,12 @@ import {
 } from '../../../../../../../../lib/repo-access'
 
 const MAX_OBJECT_BYTES = 100 * 1024 * 1024 // 100 MB
+// Base64 expands bytes by ~4/3; add a small margin
+const MAX_DATA_CHARS = Math.ceil(MAX_OBJECT_BYTES * 4 / 3) + 256
 
 const UploadSchema = z.object({
   hash: z.string().length(64).regex(/^[0-9a-f]{64}$/),
-  data: z.string(), // base64-encoded bytes
+  data: z.string().max(MAX_DATA_CHARS), // base64-encoded bytes
 })
 
 interface RouteParams {

@@ -18,11 +18,12 @@ import {
 
 const MAX_OBJECT_BYTES = 100 * 1024 * 1024
 const MAX_BATCH_REQUEST_BYTES = 25 * 1024 * 1024
+const MAX_DATA_CHARS = Math.ceil(MAX_OBJECT_BYTES * 4 / 3) + 256
 
 const UploadBatchSchema = z.object({
   objects: z.array(z.object({
     hash: z.string().length(64).regex(/^[0-9a-f]{64}$/),
-    data: z.string(),
+    data: z.string().max(MAX_DATA_CHARS),
   })).min(1).max(2_000),
 })
 

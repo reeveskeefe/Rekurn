@@ -16,6 +16,18 @@ import chalk from 'chalk'
 import { loadStore, setActiveSite, removeSite } from '../lib/credentials.js'
 
 // ---------------------------------------------------------------------------
+// HTML escaping — prevents XSS when interpolating user-controlled values
+// ---------------------------------------------------------------------------
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+// ---------------------------------------------------------------------------
 // Settings page HTML
 // ---------------------------------------------------------------------------
 function settingsPage(store: ReturnType<typeof loadStore>, serverToken: string): string {
@@ -26,15 +38,17 @@ function settingsPage(store: ReturnType<typeof loadStore>, serverToken: string):
     ? `<div class="empty">No sites configured yet. Run <code>rekurn login https://api.your-site.com</code> in your terminal.</div>`
     : sites.map(([url, site]) => {
         const isActive = url === active
+        const safeUrl = escHtml(url)
+        const safeEmail = escHtml(site.email)
         return `
-        <div class="site-row ${isActive ? 'site-active' : ''}" data-url="${url}">
+        <div class="site-row ${isActive ? 'site-active' : ''}" data-url="${safeUrl}">
           <div class="site-info">
-            <div class="site-url">${url}${isActive ? ' <span class="badge">active</span>' : ''}</div>
-            <div class="site-meta">Logged in as <strong>${site.email}</strong></div>
+            <div class="site-url">${safeUrl}${isActive ? ' <span class="badge">active</span>' : ''}</div>
+            <div class="site-meta">Logged in as <strong>${safeEmail}</strong></div>
           </div>
           <div class="site-actions">
-            ${!isActive ? `<button class="btn-switch" data-url="${url}">Switch</button>` : ''}
-            <button class="btn-remove" data-url="${url}">Remove</button>
+            ${!isActive ? `<button class="btn-switch" data-url="${safeUrl}">Switch</button>` : ''}
+            <button class="btn-remove" data-url="${safeUrl}">Remove</button>
           </div>
         </div>`
       }).join('')

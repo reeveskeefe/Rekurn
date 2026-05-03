@@ -393,25 +393,49 @@ export async function loginCommand(urlArg?: string): Promise<void> {
           return
         }
 
-        const receivedState = reqUrl.searchParams.get('state') ?? ''
-        const receivedToken = reqUrl.searchParams.get('token') ?? ''
-
-        if (receivedState !== state) {
-          res.writeHead(400, { 'Content-Type': 'text/html' })
-            .end('<p>Invalid state. Please try again.</p>')
+        // The API sends a self-submitting POST form (token never appears in URL)
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'text/html' })
+            .end('<p>Method not allowed.</p>')
           return
         }
 
-        if (!receivedToken) {
-          res.writeHead(400, { 'Content-Type': 'text/html' })
-            .end('<p>No token received. Please try again.</p>')
-          return
-        }
+        let body = ''
+        req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+        req.on('end', () => {
+          try {
+            // Parse application/x-www-form-urlencoded
+            const params = new URLSearchParams(body)
+            const receivedState = params.get('state') ?? ''
+            const receivedToken = params.get('token') ?? ''
 
-        res.writeHead(200, { 'Content-Type': 'text/html' }).end(SUCCESS_PAGE)
-        clearTimeout(timer)
-        server.close()
-        resolve(receivedToken)
+            // Timing-safe state comparison
+            const stateOk =
+              receivedState.length === state.length &&
+              timingSafeEqual(Buffer.from(receivedState), Buffer.from(state))
+
+            if (!stateOk) {
+              res.writeHead(400, { 'Content-Type': 'text/html' })
+                .end('<p>Invalid state. Please try again.</p>')
+              return
+            }
+
+            if (!receivedToken) {
+              res.writeHead(400, { 'Content-Type': 'text/html' })
+                .end('<p>No token received. Please try again.</p>')
+              return
+            }
+
+            res.writeHead(200, { 'Content-Type': 'text/html' }).end(SUCCESS_PAGE)
+            clearTimeout(timer)
+            server.close()
+            resolve(receivedToken)
+          } catch (err) {
+            clearTimeout(timer)
+            server.close()
+            reject(err)
+          }
+        })
       } catch (err) {
         clearTimeout(timer)
         server.close()

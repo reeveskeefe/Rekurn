@@ -15,6 +15,10 @@ const HASH_CHUNK_SIZE = 5_000
 const MAX_BATCH_REQUEST_BYTES = 25 * 1024 * 1024
 const SINGLE_TRANSFER_CONCURRENCY = 6
 
+// Ref names must be heads/<name> or tags/<name> with safe characters only
+const SAFE_REF_NAME = /^(heads|tags)\/[a-zA-Z0-9][a-zA-Z0-9._\-/]{0,198}$/
+const HASH_RE = /^[0-9a-f]{64}$/
+
 // ---------------------------------------------------------------------------
 // Internal HTTP helpers
 // ---------------------------------------------------------------------------
@@ -86,8 +90,15 @@ export async function getRemoteRefs(info: RemoteInfo, token: string): Promise<Re
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!res.ok) return []
-    const data = await res.json() as { refs: RemoteRef[] }
-    return data.refs ?? []
+    const raw = (await res.json() as { refs?: unknown[] }).refs ?? []
+    return raw.filter((r): r is RemoteRef =>
+      r !== null &&
+      typeof r === 'object' &&
+      typeof (r as RemoteRef).name === 'string' &&
+      SAFE_REF_NAME.test((r as RemoteRef).name) &&
+      typeof (r as RemoteRef).commitHash === 'string' &&
+      HASH_RE.test((r as RemoteRef).commitHash)
+    )
   } catch {
     return []
   }

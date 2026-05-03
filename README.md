@@ -11,13 +11,13 @@ Rekurn was built for oreulius.com so our own sites can have an independent repos
 Install the CLI globally:
 
 ```bash
-npm install -g rekurn@0.2.0
+npm install -g rekurn@0.2.2
 ```
 
 Or run it directly:
 
 ```bash
-npx rekurn@0.2.0 --help
+npx rekurn@0.2.2 --help
 ```
 
 Install the SDK:
