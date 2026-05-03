@@ -11,19 +11,19 @@ Rekurn was built for oreulius.com so our own sites can have an independent repos
 Install the CLI globally:
 
 ```bash
-npm install -g rekurn
+npm install -g rekurn@0.2.0
 ```
 
 Or run it directly:
 
 ```bash
-npx rekurn --help
+npx rekurn@0.2.0 --help
 ```
 
 Install the SDK:
 
 ```bash
-npm install @reeveskeefe/rekurn-sdk
+npm install @reeveskeefe/rekurn-sdk@0.2.0
 ```
 
 API reference:
@@ -53,7 +53,7 @@ Configure a remote and push securely:
 
 ```bash
 rekurn login
-rekurn remote set https://api.example.com/<owner-id>/<repo-name>
+rekurn remote set https://api.example.com/<username>/<repo-name>
 rekurn push origin main
 ```
 
