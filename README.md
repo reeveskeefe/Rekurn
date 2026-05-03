@@ -185,7 +185,7 @@ git sparse-checkout set apps/api db packages/core packages/crypto packages/types
 pnpm install
 ```
 
-This downloads only the `apps/api`, `db`, and the required shared packages — not the CLI, SDK, or diff packages.
+This downloads only the `apps/api`, `db`, and the required shared packages, not the CLI, SDK, or diff packages.
 
 Deploy `apps/api` to Vercel (or any Node.js host) and set the `POSTGRES_URL` environment variable to your Vercel Postgres connection string. Then run the database migration once:
 
