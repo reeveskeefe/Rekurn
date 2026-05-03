@@ -154,9 +154,11 @@ Do not commit API tokens, deploy hooks, private keys, signing keys, or productio
 
 ## Development and Contributing
 
-Install dependencies:
+Clone the repo and install dependencies:
 
 ```bash
+git clone https://github.com/reeveskeefe/Rekurn.git
+cd Rekurn
 pnpm install
 ```
 
@@ -170,6 +172,33 @@ Run tests:
 
 ```bash
 pnpm test
+```
+
+### Running your own API instance
+
+`apps/api` depends on several internal workspace packages, so the quickest way to get only what you need is a sparse, blobless clone:
+
+```bash
+git clone --filter=blob:none --sparse https://github.com/reeveskeefe/Rekurn.git
+cd Rekurn
+git sparse-checkout set apps/api db packages/core packages/crypto packages/types
+pnpm install
+```
+
+This downloads only the `apps/api`, `db`, and the required shared packages — not the CLI, SDK, or diff packages.
+
+Deploy `apps/api` to Vercel (or any Node.js host) and set the `POSTGRES_URL` environment variable to your Vercel Postgres connection string. Then run the database migration once:
+
+```bash
+cd db
+POSTGRES_URL="your-postgres-connection-string" pnpm drizzle-kit push
+```
+
+Once deployed, users point the CLI at your site:
+
+```bash
+rekurn login
+# enter your site's URL when prompted
 ```
 
 Build publishable packages before release or when changing CLI/SDK packaging:
