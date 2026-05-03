@@ -57,6 +57,26 @@ rekurn remote set https://api.example.com/<username>/<repo-name>
 rekurn push origin main
 ```
 
+Rekurn was desiggned to be easy to set up; when you run rekurn log in for the first time, there is no centralized api where you log in. You must point it to a site first from the cli. So when you run 
+
+```bash 
+rekurn login
+```
+
+You will get a locally hosted page showing the follwing:
+<img src="packages/sdk/assets/login.png">
+
+You point it in the websites API link, (if they allow it to be available) running the rekurn system. For example, when oreulius.com uses it, it might look something like oreulius.com/api/v1/fetch or something of the manner, and you put that in the link. 
+
+Whenever you come across a new site that hosts repositories running rekurn all you need to point it at their site speifically, and then it is configured to their site aswell, and your log in will work with any of the sites running it. 
+
+if you forget how to do so, run 
+```bash 
+rekurn settings
+```
+It will send you a locally hosted page exlaining set up instructions 
+<img src="packages/sdk/assets/SETUP.png">
+
 For signed push certificates, configure an Ed25519 secret key seed:
 
 ```bash
