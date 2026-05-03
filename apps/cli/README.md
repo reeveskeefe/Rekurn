@@ -3,13 +3,13 @@
 Install globally:
 
 ```bash
-npm install -g rekurn
+npm install -g rekurn@0.2.0
 ```
 
 Or run with npx:
 
 ```bash
-npx rekurn --help
+npx rekurn@0.2.0 --help
 ```
 
 Rekurn is a TypeScript-first versioning and release tool with local commits,
