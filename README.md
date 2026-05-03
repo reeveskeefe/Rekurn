@@ -11,24 +11,20 @@ Rekurn was built for oreulius.com so our own sites can have an independent repos
 Install the CLI globally:
 
 ```bash
-npm install -g rekurn@0.2.2
+npm install -g rekurn@0.2.5
 ```
 
 Or run it directly:
 
 ```bash
-npx rekurn@0.2.2 --help
+npx rekurn@0.2.5 --help
 ```
 
 Install the SDK:
 
 ```bash
-npm install @reeveskeefe/rekurn-sdk@0.2.0
+npm install @reeveskeefe/rekurn-sdk@0.2.5
 ```
-
-API reference:
-
-https://oreulius.com/api-reference
 
 ## CLI
 
@@ -53,29 +49,42 @@ Configure a remote and push securely:
 
 ```bash
 rekurn login
-rekurn remote set https://api.example.com/<username>/<repo-name>
+rekurn remote set https://your-site.com/<username>/<repo-name>
 rekurn push origin main
 ```
 
-Rekurn was desiggned to be easy to set up; when you run rekurn log in for the first time, there is no centralized api where you log in. You must point it to a site first from the cli. So when you run 
+### Login
 
-```bash 
+Rekurn has no centralized login server. Every site that runs the Rekurn API is independent. When you run `rekurn login` for the first time you will be prompted for the URL of the site you want to connect to:
+
+```bash
 rekurn login
 ```
 
-You will get a locally hosted page showing the follwing:
 <img src="packages/sdk/assets/login.png">
 
-You point it in the websites API link, (if they allow it to be available) running the rekurn system. For example, when oreulius.com uses it, it might look something like oreulius.com/api/v1/fetch or something of the manner, and you put that in the link. 
+Enter the base URL of any site running the Rekurn API (for example `https://oreulius.com`). Rekurn opens a magic-link authentication flow in your browser. Once you confirm your email, the CLI receives the session token and stores it in your OS keychain — nothing is written to disk in plain text.
 
-Whenever you come across a new site that hosts repositories running rekurn all you need to point it at their site speifically, and then it is configured to their site aswell, and your log in will work with any of the sites running it. 
+You can be logged into multiple sites at the same time. Each site gets its own keychain entry keyed by its URL. Rekurn automatically switches context based on the remote configured for the current repository.
 
-if you forget how to do so, run 
-```bash 
+If you need a reminder of how to set things up, run:
+
+```bash
 rekurn settings
 ```
-It will send you a locally hosted page exlaining set up instructions 
+
 <img src="packages/sdk/assets/SETUP.png">
+
+### Session refresh
+
+Sessions are long-lived but will eventually expire. When that happens, Rekurn automatically attempts to refresh your token in the background. If refresh fails you will see:
+
+```
+Your session has expired.
+Run: rekurn login https://your-site.com
+```
+
+### Other commands
 
 For signed push certificates, configure an Ed25519 secret key seed:
 
@@ -124,21 +133,22 @@ const rekurn = new RekurnClient({
 const repos = await rekurn.repos.list()
 ```
 
-The SDK is ESM, dependency-free at runtime, tree-shakable, and includes TypeScript declarations. It enforces HTTPS by default, supports request timeouts, retries transient failures with backoff, and sanitizes API errors.
+The SDK is ESM, dependency-free at runtime, tree-shakable, and includes TypeScript declarations. It enforces HTTPS by default, supports request timeouts, retries transient failures with backoff, and sanitizes API errors. See [packages/sdk/README.md](packages/sdk/README.md) for the full API reference.
 
 ## Packages
 
-- rekurn: the CLI package for global installs and npx.
-- @reeveskeefe/rekurn-sdk: the TypeScript SDK for applications and integrations.
+- `rekurn` — CLI package for global installs and npx.
+- `@reeveskeefe/rekurn-sdk` — TypeScript SDK for applications and integrations.
 
 The monorepo also contains internal packages for core object handling, crypto, diffing, API routes, and database schema.
 
-
 ## Security
 
-Rekurn uses content-addressed objects and verifies object hashes before storage. Sensitive operations such as object upload, ref updates, deploy hook updates, and deployment recording require write access. Public API routes are rate-limited, and SDK clients should keep tokens in environment variables or a platform secret store.
+Rekurn uses content-addressed objects and verifies object hashes before storage. Sensitive operations such as object upload, ref updates, deploy hook updates, and deployment recording require write access. All stored objects are private by default and are served through signed URLs. Public API routes are rate-limited using a database-backed limiter.
 
 Push uses bearer-token authentication, HTTPS remote enforcement, compare-and-swap ref updates, object hash validation, and optional Ed25519 signed push certificates. Localhost HTTP remotes are only allowed when `REKURN_ALLOW_INSECURE_REMOTE=1` is set for development.
+
+Session tokens are stored exclusively in the OS keychain (macOS Keychain, Linux Secret Service / encrypted vault, Windows DPAPI). They are never written to disk in plain text.
 
 Do not commit API tokens, deploy hooks, private keys, signing keys, or production `.rekurn/config` files.
 
@@ -164,9 +174,10 @@ pnpm test
 
 Build publishable packages before release or when changing CLI/SDK packaging:
 
+```bash
 pnpm --filter rekurn build
 pnpm --filter @reeveskeefe/rekurn-sdk build
-
+```
 
 ## License
 
