@@ -117,7 +117,7 @@ rekurn rollback @v1.0.0
 import { RekurnClient } from '@reeveskeefe/rekurn-sdk'
 
 const rekurn = new RekurnClient({
-  baseUrl: 'https://api.rekurn.com',
+  baseUrl: 'https://your-site.com',
   token: process.env.REKURN_TOKEN,
 })
 

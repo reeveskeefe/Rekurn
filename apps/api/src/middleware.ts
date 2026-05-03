@@ -33,7 +33,7 @@ export async function middleware(request: NextRequest) {
     const ip = trustedProxy
       ? (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? remoteIp)
       : remoteIp
-    const limited = rateLimit(`${ip}:${pathname}`, 60, 60_000)
+    const limited = await rateLimit(`${ip}:${pathname}`, 60, 60_000)
     if (!limited.ok) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -53,7 +53,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Per-user rate limiting on authenticated routes (300 req / minute)
-  const authLimited = rateLimit(`user:${session.user.id}:${pathname}`, 300, 60_000)
+  const authLimited = await rateLimit(`user:${session.user.id}:${pathname}`, 300, 60_000)
   if (!authLimited.ok) {
     return NextResponse.json(
       { error: 'Too many requests' },

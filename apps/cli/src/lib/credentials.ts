@@ -1,6 +1,9 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs'
+import { getPassword, setPassword, deletePassword } from './keychain.js'
+
+const KEYCHAIN_SERVICE = 'rekurn'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -8,7 +11,16 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node
 
 /** Credentials for a single Rekurn site. */
 export interface SiteCredentials {
+  /** Not stored in credentials.json — kept in OS keychain. */
   token: string
+  email: string
+  userId: string
+  savedAt: string
+}
+
+/** Shape stored on disk — token field omitted (keychain holds it). */
+interface StoredSiteCredentials {
+  token?: string // present only in old pre-keychain files (migrated on first read)
   email: string
   userId: string
   savedAt: string
@@ -18,7 +30,7 @@ export interface SiteCredentials {
 export interface CredentialsStore {
   /** apiUrl of the currently active site. */
   active: string
-  sites: Record<string, SiteCredentials>
+  sites: Record<string, StoredSiteCredentials>
 }
 
 /** Convenience type: active site's credentials + its URL. */
@@ -57,6 +69,7 @@ export function loadStore(): CredentialsStore | null {
         active: old.apiUrl,
         sites: {
           [old.apiUrl]: {
+            // token kept inline so loadCredentials can migrate it to keychain on next read
             token: old.token,
             email: old.email,
             userId: old.userId,
@@ -88,17 +101,36 @@ export function loadCredentials(): Credentials | null {
   if (!store) return null
   const site = store.sites[store.active]
   if (!site) return null
-  return { ...site, apiUrl: store.active }
+
+  // Try keychain first
+  let token = getPassword(KEYCHAIN_SERVICE, store.active)
+
+  // Backward compat: old credentials.json had the token inline — migrate it
+  if (!token && site.token) {
+    token = site.token
+    setPassword(KEYCHAIN_SERVICE, store.active, token)
+    // Re-save without the inline token
+    const { token: _dropped, ...rest } = site
+    void _dropped
+    store.sites[store.active] = rest
+    writeStore(store)
+  }
+
+  if (!token) return null
+  return { token, email: site.email, userId: site.userId, savedAt: site.savedAt, apiUrl: store.active }
 }
 
 /** Save (or update) credentials for a site and set it as active. */
 export function saveCredentials(creds: Credentials): void {
+  // Token goes to the OS keychain — never written to disk
+  setPassword(KEYCHAIN_SERVICE, creds.apiUrl, creds.token)
+
   const store = loadStore() ?? { active: creds.apiUrl, sites: {} }
   store.sites[creds.apiUrl] = {
-    token: creds.token,
     email: creds.email,
     userId: creds.userId,
     savedAt: creds.savedAt,
+    // token intentionally omitted
   }
   store.active = creds.apiUrl
   writeStore(store)
@@ -115,6 +147,7 @@ export function setActiveSite(apiUrl: string): boolean {
 
 /** Remove a site from the store. If it was active, clears active. */
 export function removeSite(apiUrl: string): void {
+  deletePassword(KEYCHAIN_SERVICE, apiUrl)
   const store = loadStore()
   if (!store) return
   delete store.sites[apiUrl]
@@ -125,8 +158,15 @@ export function removeSite(apiUrl: string): void {
   writeStore(store)
 }
 
-/** Clear all credentials. */
+/** Clear all credentials (disk + keychain). */
 export function clearCredentials(): void {
+  // Remove all keychain entries before deleting the file
+  const store = loadStore()
+  if (store) {
+    for (const apiUrl of Object.keys(store.sites)) {
+      try { deletePassword(KEYCHAIN_SERVICE, apiUrl) } catch { /* ignore */ }
+    }
+  }
   try {
     rmSync(credentialsPath)
   } catch {

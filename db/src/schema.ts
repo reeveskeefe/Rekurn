@@ -277,3 +277,13 @@ export const auditLog = pgTable(
   },
   (t) => [index('audit_log_repo_idx').on(t.repoId), index('audit_log_user_idx').on(t.userId)],
 )
+
+// ---------------------------------------------------------------------------
+// Rate Limits  (cross-instance, Postgres-backed sliding window)
+// ---------------------------------------------------------------------------
+export const rateLimits = pgTable('rate_limits', {
+  /** Composite key: e.g. "ip:1.2.3.4:/api/v1" or "user:<uuid>:/api/v1/repos/…" */
+  key: text('key').primaryKey(),
+  count: integer('count').notNull(),
+  resetAt: timestamp('reset_at', { withTimezone: true }).notNull(),
+})

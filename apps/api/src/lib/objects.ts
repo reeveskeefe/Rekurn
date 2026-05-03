@@ -9,7 +9,7 @@
  * `ON CONFLICT DO NOTHING` guards all inserts.
  */
 
-import { put } from '@vercel/blob'
+import { put, get } from '@vercel/blob'
 import { db, objects, commits } from '@rekurn/db'
 import { eq, inArray } from 'drizzle-orm'
 import { computeObjectHash, detectObjectType, parseCommit } from '@rekurn/core'
@@ -43,7 +43,7 @@ export async function storeObject(
 
   // Upload to Vercel Blob at a globally-unique path by hash
   const blob = await put(`rekurn/objects/${hash}`, bytes, {
-    access: 'public',
+    access: 'private',
     token: process.env.BLOB_READ_WRITE_TOKEN,
     addRandomSuffix: false,
   })
@@ -91,8 +91,7 @@ export async function getObjectBytes(hash: string): Promise<Buffer | null> {
     const parsed = new URL(blobUrl)
     const isVercelBlob =
       parsed.protocol === 'https:' &&
-      (parsed.hostname.endsWith('.public.blob.vercel-storage.com') ||
-       parsed.hostname.endsWith('.private.blob.vercel-storage.com'))
+      parsed.hostname.endsWith('.blob.vercel-storage.com')
     if (!isVercelBlob) {
       console.error('[objects] Refusing to fetch suspicious blobUrl:', blobUrl)
       return null
@@ -101,10 +100,22 @@ export async function getObjectBytes(hash: string): Promise<Buffer | null> {
     return null
   }
 
-  const res = await fetch(blobUrl)
-  if (!res.ok) return null
+  // Private blobs require authentication — use the SDK's get() which handles auth automatically
+  const result = await get(blobUrl, {
+    access: 'private',
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+  })
 
-  return Buffer.from(await res.arrayBuffer())
+  if (!result || result.statusCode !== 200) return null
+
+  const reader = result.stream.getReader()
+  const chunks: Uint8Array[] = []
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value) chunks.push(value)
+  }
+  return Buffer.concat(chunks)
 }
 
 // ---------------------------------------------------------------------------
