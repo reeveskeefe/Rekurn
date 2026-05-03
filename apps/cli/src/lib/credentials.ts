@@ -11,8 +11,15 @@ const KEYCHAIN_SERVICE = 'rekurn'
 
 /** Credentials for a single Rekurn site. */
 export interface SiteCredentials {
-  /** Not stored in credentials.json — kept in OS keychain. */
+  /** Short-lived access token — OS keychain only, not in credentials.json. */
   token: string
+  /**
+   * Long-lived session token used to obtain a fresh access token.
+   * Stored under a separate keychain entry (service = 'rekurn-refresh').
+   * Currently the same value as `token`; diverges when the API issues
+   * short-lived JWTs as access tokens.
+   */
+  refreshToken: string
   email: string
   userId: string
   savedAt: string
@@ -117,20 +124,29 @@ export function loadCredentials(): Credentials | null {
   }
 
   if (!token) return null
-  return { token, email: site.email, userId: site.userId, savedAt: site.savedAt, apiUrl: store.active }
+
+  // Refresh token: try keychain; fall back to access token (migration for pre-refresh installs)
+  const storedRefresh = getPassword(KEYCHAIN_SERVICE + '-refresh', store.active)
+  const refreshToken = storedRefresh ?? token
+  if (!storedRefresh) {
+    setPassword(KEYCHAIN_SERVICE + '-refresh', store.active, token)
+  }
+
+  return { token, refreshToken, email: site.email, userId: site.userId, savedAt: site.savedAt, apiUrl: store.active }
 }
 
 /** Save (or update) credentials for a site and set it as active. */
 export function saveCredentials(creds: Credentials): void {
-  // Token goes to the OS keychain — never written to disk
+  // Tokens go to the OS keychain — never written to disk
   setPassword(KEYCHAIN_SERVICE, creds.apiUrl, creds.token)
+  setPassword(KEYCHAIN_SERVICE + '-refresh', creds.apiUrl, creds.refreshToken)
 
   const store = loadStore() ?? { active: creds.apiUrl, sites: {} }
   store.sites[creds.apiUrl] = {
     email: creds.email,
     userId: creds.userId,
     savedAt: creds.savedAt,
-    // token intentionally omitted
+    // tokens intentionally omitted
   }
   store.active = creds.apiUrl
   writeStore(store)
@@ -148,6 +164,7 @@ export function setActiveSite(apiUrl: string): boolean {
 /** Remove a site from the store. If it was active, clears active. */
 export function removeSite(apiUrl: string): void {
   deletePassword(KEYCHAIN_SERVICE, apiUrl)
+  deletePassword(KEYCHAIN_SERVICE + '-refresh', apiUrl)
   const store = loadStore()
   if (!store) return
   delete store.sites[apiUrl]
@@ -165,6 +182,7 @@ export function clearCredentials(): void {
   if (store) {
     for (const apiUrl of Object.keys(store.sites)) {
       try { deletePassword(KEYCHAIN_SERVICE, apiUrl) } catch { /* ignore */ }
+      try { deletePassword(KEYCHAIN_SERVICE + '-refresh', apiUrl) } catch { /* ignore */ }
     }
   }
   try {
@@ -179,4 +197,14 @@ export function getAuthHeaders(): { Authorization: string } | Record<string, nev
   const creds = loadCredentials()
   if (!creds) return {}
   return { Authorization: `Bearer ${creds.token}` }
+}
+
+/** Update only the stored access token (called after a successful token refresh). */
+export function updateAccessToken(apiUrl: string, newToken: string): void {
+  setPassword(KEYCHAIN_SERVICE, apiUrl, newToken)
+}
+
+/** Return the refresh token for a site, or null if not stored. */
+export function getRefreshToken(apiUrl: string): string | null {
+  return getPassword(KEYCHAIN_SERVICE + '-refresh', apiUrl)
 }

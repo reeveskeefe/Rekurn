@@ -465,6 +465,7 @@ export async function loginCommand(urlArg?: string): Promise<void> {
 
   saveCredentials({
     token,
+    refreshToken: token, // same session token at login; diverges when API issues short-lived JWTs
     email,
     userId,
     apiUrl,
