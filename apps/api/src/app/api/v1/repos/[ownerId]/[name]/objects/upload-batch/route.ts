@@ -9,7 +9,8 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../../lib/session-cache'
+import { mapLimit } from '../../../../../../../../lib/concurrency'
 import { storeObject, validateObjectHash } from '../../../../../../../../lib/objects'
 import {
   requireWriteAccess,
@@ -33,7 +34,7 @@ interface RouteParams {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
@@ -88,9 +89,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       decoded.push({ hash: object.hash, bytes })
     }
 
-    for (const object of decoded) {
-      await storeObject(repo.id, object.hash, object.bytes)
-    }
+    await mapLimit(decoded, 8, (object) => storeObject(repo.id, object.hash, object.bytes))
 
     return NextResponse.json({ ok: true, stored: decoded.length })
   } catch (err) {

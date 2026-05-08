@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { db, auditLog } from '@rekurn/db'
 import { desc, eq } from 'drizzle-orm'
-import { auth } from '../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../lib/session-cache'
 import {
   accessErrorResponse,
   requireReadAccess,
@@ -14,7 +14,7 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
 
   try {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)

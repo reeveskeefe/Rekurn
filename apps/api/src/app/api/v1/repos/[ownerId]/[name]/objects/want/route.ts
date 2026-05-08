@@ -10,7 +10,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../../lib/session-cache'
 import { getMissingHashes } from '../../../../../../../../lib/objects'
 import {
   requireReadAccess,
@@ -28,7 +28,7 @@ interface RouteParams {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
 
   try {
     // Read access is sufficient — anyone who can read can ask what's present

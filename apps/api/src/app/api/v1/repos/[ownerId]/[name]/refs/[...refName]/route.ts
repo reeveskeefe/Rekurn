@@ -14,7 +14,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../../lib/session-cache'
 import { db, refs } from '@rekurn/db'
 import { and, eq } from 'drizzle-orm'
 import {
@@ -55,7 +55,7 @@ interface RouteParams {
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name, refName } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const fullRefName = refName.join('/')
@@ -200,7 +200,7 @@ function canonicalJson(value: unknown): string {
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name, refName } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const fullRefName = refName.join('/')

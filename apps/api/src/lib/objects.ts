@@ -129,7 +129,7 @@ export async function getMissingHashes(hashes: string[]): Promise<string[]> {
   if (hashes.length === 0) return []
 
   // Process in chunks to avoid hitting PostgreSQL parameter limits
-  const CHUNK_SIZE = 500
+  const CHUNK_SIZE = 2_000
   const present = new Set<string>()
 
   for (let i = 0; i < hashes.length; i += CHUNK_SIZE) {

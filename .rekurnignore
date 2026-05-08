@@ -1,0 +1,12 @@
+node_modules/
+build/
+.vercel/
+.git/
+.DS_Store
+*.log
+public/libv86.js
+public/v86.wasm
+.env
+.env.local
+.env.production
+.env.development

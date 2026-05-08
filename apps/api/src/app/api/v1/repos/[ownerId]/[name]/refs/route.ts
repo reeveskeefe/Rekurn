@@ -3,7 +3,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from '../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../lib/session-cache'
 import { db, refs } from '@rekurn/db'
 import { eq } from 'drizzle-orm'
 import {
@@ -18,7 +18,7 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
 
   try {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)

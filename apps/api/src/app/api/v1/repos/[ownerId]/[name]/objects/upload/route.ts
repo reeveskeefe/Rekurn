@@ -12,7 +12,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../../lib/session-cache'
 import { storeObject, validateObjectHash } from '../../../../../../../../lib/objects'
 import {
   requireWriteAccess,
@@ -34,7 +34,7 @@ interface RouteParams {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {

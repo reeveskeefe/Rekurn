@@ -28,6 +28,7 @@ import {
   readConfig,
 } from '../lib/repo.js'
 import { assertSecureRemote, getRemote, setRemote, formatRemoteUrl } from '../lib/remote.js'
+import { apiGet } from '../lib/http.js'
 import {
   getRemoteRefs,
   collectObjectsForPush,
@@ -40,6 +41,7 @@ import {
 export async function pushCommand(
   _remoteName?: string,
   branchName?: string,
+  options: { visibility?: 'public' | 'private' } = {},
 ): Promise<void> {
   const repoRoot = requireRepoRoot()
   const creds = loadCredentials()
@@ -79,13 +81,14 @@ export async function pushCommand(
 
     // Auto-create repo on server using the local directory name
     const repoName = basename(repoRoot)
+    const visibility = options.visibility ?? 'private'
     const createRes = await fetch(`${creds.apiUrl}/api/v1/repos`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${creds.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name: repoName, visibility: 'private' }),
+      body: JSON.stringify({ name: repoName, visibility }),
     })
 
     if (!createRes.ok && createRes.status !== 409) {
@@ -94,11 +97,22 @@ export async function pushCommand(
       process.exit(1)
     }
 
-    setRemote(repoRoot, creds.apiUrl, creds.userId, repoName)
-    remote = { apiUrl: creds.apiUrl, ownerId: creds.userId, repoName }
+    // Prefer username slug over raw UUID for pretty URLs
+    let ownerSlug = creds.userId
+    try {
+      const meRes = await apiGet('/api/v1/users/me')
+      if (meRes.ok) {
+        const me = (await meRes.json()) as { username?: string | null }
+        if (me.username) ownerSlug = me.username
+      }
+    } catch { /* ignore — fall back to userId */ }
 
-    const repoUrl = formatRemoteUrl(creds.apiUrl, creds.userId, repoName)
+    setRemote(repoRoot, creds.apiUrl, ownerSlug, repoName)
+    remote = { apiUrl: creds.apiUrl, ownerId: ownerSlug, repoName }
+
+    const repoUrl = formatRemoteUrl(creds.apiUrl, ownerSlug, repoName)
     console.log(chalk.green(`Created remote repository: ${repoUrl}`))
+    if (visibility === 'public') console.log(chalk.dim('  visibility: public'))
   }
 
   try {

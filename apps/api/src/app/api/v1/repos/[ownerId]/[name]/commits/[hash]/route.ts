@@ -7,7 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from '../../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../../lib/session-cache'
 import { db, commits } from '@rekurn/db'
 import { and, eq } from 'drizzle-orm'
 import {
@@ -33,7 +33,7 @@ function parseIdentity(ident: string): Identity {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name, hash } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
 
   if (!/^[0-9a-f]{64}$/.test(hash)) {
     return NextResponse.json({ error: 'Invalid hash format' }, { status: 400 })

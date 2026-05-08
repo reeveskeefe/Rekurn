@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../lib/session-cache'
 import { db, repos } from '@rekurn/db'
 import { eq } from 'drizzle-orm'
 import {
@@ -20,7 +20,7 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
 
   try {
     const repo = await requireReadAccess(sessionUserId(session), ownerId, name)
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body: unknown = await request.json()

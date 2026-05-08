@@ -12,10 +12,10 @@
  * middleware.ts (60 req/min per IP, 300 req/min per user).
  */
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from '../../../../lib/auth'
+import { getCachedSession } from '../../../../lib/session-cache'
 
 export async function POST(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) {
     return NextResponse.json(
       { error: 'Session expired or invalid. Please run rekurn login again.' },

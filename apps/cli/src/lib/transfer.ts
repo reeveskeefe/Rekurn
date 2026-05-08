@@ -14,6 +14,8 @@ import { mapLimit } from './concurrency.js'
 const HASH_CHUNK_SIZE = 5_000
 const MAX_BATCH_REQUEST_BYTES = 25 * 1024 * 1024
 const SINGLE_TRANSFER_CONCURRENCY = 6
+const BATCH_DISPATCH_CONCURRENCY = 4
+const WANT_CHUNK_CONCURRENCY = 3
 
 // Ref names must be heads/<name> or tags/<name> with safe characters only
 const SAFE_REF_NAME = /^(heads|tags)\/[a-zA-Z0-9][a-zA-Z0-9._\-/]{0,198}$/
@@ -151,19 +153,21 @@ export async function getMissingFromRemote(
   hashes: string[],
 ): Promise<string[]> {
   if (hashes.length === 0) return []
-  const missing: string[] = []
 
+  const chunks: string[][] = []
   for (let i = 0; i < hashes.length; i += HASH_CHUNK_SIZE) {
-    const chunk = hashes.slice(i, i + HASH_CHUNK_SIZE)
-    const data = await apiPost<{ missing: string[] }>(
+    chunks.push(hashes.slice(i, i + HASH_CHUNK_SIZE))
+  }
+
+  const results = await mapLimit(chunks, WANT_CHUNK_CONCURRENCY, (chunk) =>
+    apiPost<{ missing: string[] }>(
       `${repoBase(info)}/objects/want`,
       token,
       { hashes: chunk },
-    )
-    missing.push(...data.missing)
-  }
+    ).then((data) => data.missing),
+  )
 
-  return missing
+  return results.flat()
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +189,10 @@ export async function uploadObject(
   })
 }
 
+type UploadTask =
+  | { type: 'batch'; items: Array<{ hash: string; bytes: Buffer }> }
+  | { type: 'single'; hash: string; bytes: Buffer }
+
 export async function uploadObjects(
   info: RemoteInfo,
   token: string,
@@ -193,34 +201,16 @@ export async function uploadObjects(
   onProgress?: (uploaded: number) => void,
   onMissingLocal?: (hash: string) => void,
 ): Promise<number> {
-  let uploaded = 0
-  let batchSupported = true
-  let batch: Array<{ hash: string; bytes: Buffer }> = []
+  // Phase 1: collect all upload tasks synchronously (no I/O)
+  const tasks: UploadTask[] = []
+  let currentBatch: Array<{ hash: string; bytes: Buffer }> = []
   let batchRequestBytes = 16
 
-  async function flushBatch(): Promise<void> {
-    if (batch.length === 0) return
-    const current = batch
-    batch = []
+  const commitBatch = (): void => {
+    if (currentBatch.length === 0) return
+    tasks.push({ type: 'batch', items: currentBatch })
+    currentBatch = []
     batchRequestBytes = 16
-
-    if (batchSupported) {
-      try {
-        await uploadObjectBatch(info, token, current)
-        uploaded += current.length
-        onProgress?.(uploaded)
-        return
-      } catch (err) {
-        if (!isUnsupportedEndpoint(err)) throw err
-        batchSupported = false
-      }
-    }
-
-    await mapLimit(current, SINGLE_TRANSFER_CONCURRENCY, async (item) => {
-      await uploadObject(info, token, item.hash, item.bytes)
-    })
-    uploaded += current.length
-    onProgress?.(uploaded)
   }
 
   for (const hash of hashes) {
@@ -232,22 +222,56 @@ export async function uploadObjects(
 
     const requestBytes = estimatedBatchObjectBytes(bytes)
     if (requestBytes > MAX_BATCH_REQUEST_BYTES) {
-      await flushBatch()
-      await uploadObject(info, token, hash, bytes)
-      uploaded++
-      onProgress?.(uploaded)
+      commitBatch()
+      tasks.push({ type: 'single', hash, bytes })
       continue
     }
 
-    if (batch.length > 0 && batchRequestBytes + requestBytes > MAX_BATCH_REQUEST_BYTES) {
-      await flushBatch()
+    if (currentBatch.length > 0 && batchRequestBytes + requestBytes > MAX_BATCH_REQUEST_BYTES) {
+      commitBatch()
     }
 
-    batch.push({ hash, bytes })
+    currentBatch.push({ hash, bytes })
     batchRequestBytes += requestBytes
   }
+  commitBatch()
 
-  await flushBatch()
+  if (tasks.length === 0) return 0
+
+  // Phase 2: dispatch all tasks concurrently.
+  // batchSupported and uploaded are mutated safely between await boundaries
+  // because JavaScript is single-threaded — no data races are possible.
+  let batchSupported = true
+  let uploaded = 0
+
+  await mapLimit(tasks, BATCH_DISPATCH_CONCURRENCY, async (task) => {
+    if (task.type === 'single') {
+      await uploadObject(info, token, task.hash, task.bytes)
+      uploaded++
+      onProgress?.(uploaded)
+      return
+    }
+
+    if (batchSupported) {
+      try {
+        await uploadObjectBatch(info, token, task.items)
+        uploaded += task.items.length
+        onProgress?.(uploaded)
+        return
+      } catch (err) {
+        if (!isUnsupportedEndpoint(err)) throw err
+        batchSupported = false
+      }
+    }
+
+    // Batch endpoint not available — fall back to individual uploads for this task
+    await mapLimit(task.items, SINGLE_TRANSFER_CONCURRENCY, async (item) => {
+      await uploadObject(info, token, item.hash, item.bytes)
+    })
+    uploaded += task.items.length
+    onProgress?.(uploaded)
+  })
+
   return uploaded
 }
 

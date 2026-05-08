@@ -7,7 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from '../../../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../../../lib/session-cache'
 import { getObjectBytes } from '../../../../../../../../lib/objects'
 import { db, objects } from '@rekurn/db'
 import { eq } from 'drizzle-orm'
@@ -23,7 +23,7 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const { ownerId, name, hash } = await params
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
 
   // Validate hash format
   if (!/^[0-9a-f]{64}$/.test(hash)) {

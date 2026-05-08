@@ -11,13 +11,13 @@
  *     → Verifies the credential and saves it to the passkeys table.
  */
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from '../../../../../../lib/auth'
+import { getCachedSession } from '../../../../../../lib/session-cache'
 import { generateRegChallenge, verifyRegChallenge } from '../../../../../../lib/webauthn'
 import type { RegistrationResponseJSON } from '@simplewebauthn/server'
 
 export async function POST(request: NextRequest) {
   // Registration always requires an active session
-  const sessionResult = await auth.api.getSession({ headers: request.headers })
+  const sessionResult = await getCachedSession(request.headers)
   if (!sessionResult) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

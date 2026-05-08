@@ -5,7 +5,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../lib/auth'
+import { getCachedSession } from '../../../../lib/session-cache'
 import { db, repos } from '@rekurn/db'
 import { eq, and } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
@@ -22,7 +22,7 @@ const CreateRepoSchema = z.object({
 })
 
 export async function GET(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const userRepos = await db
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body: unknown = await request.json()

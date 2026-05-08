@@ -25,6 +25,10 @@ import { remoteCommand } from './commands/remote.js'
 import { usernameCommand } from './commands/username.js'
 import { settingsCommand } from './commands/settings.js'
 
+if (process.env.INIT_CWD && process.env.INIT_CWD !== process.cwd()) {
+  process.chdir(process.env.INIT_CWD)
+}
+
 const program = new Command()
 
 program
@@ -156,8 +160,12 @@ program
 program
   .command('push [remote] [branch]')
   .description('Push current branch to the remote repository')
-  .action(async (remote?: string, branch?: string) => {
-    await pushCommand(remote, branch)
+  .option('--public', 'Create the remote repository as public when it does not exist')
+  .option('--private', 'Create the remote repository as private when it does not exist')
+  .action(async (remote: string | undefined, branch: string | undefined, options: { public?: boolean; private?: boolean }) => {
+    await pushCommand(remote, branch, {
+      visibility: options.public ? 'public' : 'private',
+    })
   })
 
 // ---------------------------------------------------------------------------

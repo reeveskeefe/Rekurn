@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from './lib/auth'
+import { getCachedSession } from './lib/session-cache'
 import { rateLimit } from './lib/rate-limit'
 
 /**
@@ -47,7 +47,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // ── Authenticated routes ───────────────────────────────────────────────────
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

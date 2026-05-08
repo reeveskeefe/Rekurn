@@ -44,9 +44,27 @@ export async function configCommand(args: string[]): Promise<void> {
     return
   }
 
+  if (subcommand === 'user.name' || subcommand === 'user.email') {
+    if (!key) {
+      console.error(chalk.red(`usage: rekurn config ${subcommand} <value>`))
+      process.exit(1)
+    }
+
+    const config = readConfig(repoRoot)
+    const user = {
+      ...(config.user ?? {}),
+      [subcommand === 'user.name' ? 'name' : 'email']: key,
+    }
+    writeLocalConfig(repoRoot, { ...config, user })
+    console.log(`${subcommand} set.`)
+    return
+  }
+
   if (subcommand === 'list' || !subcommand) {
     const config = readConfig(repoRoot)
     const hooks = config.deployHooks ?? {}
+    if (config.user?.name) console.log(`user.name ${chalk.dim(config.user.name)}`)
+    if (config.user?.email) console.log(`user.email ${chalk.dim(config.user.email)}`)
     if (config.signingKey) console.log(`signingKey ${chalk.dim(config.signingKey)}`)
     if (Object.keys(hooks).length === 0) {
       console.log(chalk.dim('No deploy hooks configured.'))

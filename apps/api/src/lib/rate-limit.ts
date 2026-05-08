@@ -1,11 +1,15 @@
 /**
- * Postgres-backed rate limiter — consistent across all serverless instances.
+ * Rate limiter — Redis-first with Postgres fallback.
  *
- * Uses an atomic upsert so concurrent requests from different cold-start
- * instances all share the same counters.  A lazy cleanup pass deletes
- * expired rows on ~2% of calls to avoid a dedicated cron job.
+ * Hot path: Vercel KV (Upstash Redis) INCR pipeline — sub-millisecond and
+ * consistent across all serverless instances via Redis atomic operations.
+ * KV TTL handles window expiry automatically; no cleanup queries needed.
+ *
+ * Fallback: if KV is unavailable the original Postgres upsert path is used,
+ * so rate limiting is never disabled.
  */
 
+import { kv } from '@vercel/kv'
 import { db, rateLimits } from '@rekurn/db'
 import { sql } from 'drizzle-orm'
 
@@ -15,6 +19,41 @@ export interface RateLimitResult {
 }
 
 export async function rateLimit(
+  key: string,
+  limit: number,
+  windowMs: number,
+): Promise<RateLimitResult> {
+  try {
+    return await rateLimitKv(key, limit, Math.ceil(windowMs / 1000))
+  } catch {
+    // KV unavailable — fall back to Postgres
+    return rateLimitPostgres(key, limit, windowMs)
+  }
+}
+
+async function rateLimitKv(
+  key: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<RateLimitResult> {
+  const redisKey = `rl:${key}`
+
+  // Atomic pipeline: INCR the counter and set expiry only if the key has no
+  // TTL yet (NX).  This ensures the window resets naturally when the key
+  // expires rather than on every request.
+  const pipeline = kv.pipeline()
+  pipeline.incr(redisKey)
+  pipeline.expire(redisKey, windowSeconds, 'NX')
+  const results = await pipeline.exec() as [number, ...unknown[]]
+  const count = results[0]
+
+  if (count <= limit) return { ok: true, retryAfter: 0 }
+
+  const ttl = await kv.ttl(redisKey)
+  return { ok: false, retryAfter: Math.max(0, ttl) }
+}
+
+async function rateLimitPostgres(
   key: string,
   limit: number,
   windowMs: number,
@@ -38,10 +77,7 @@ export async function rateLimit(
     .returning({ count: rateLimits.count, resetAt: rateLimits.resetAt })
 
   const row = rows[0]
-  if (!row) {
-    // Should never happen — treat as allowed
-    return { ok: true, retryAfter: 0 }
-  }
+  if (!row) return { ok: true, retryAfter: 0 }
 
   const ok = row.count <= limit
   const retryAfter = ok ? 0 : Math.ceil((row.resetAt.getTime() - now.getTime()) / 1000)
@@ -55,3 +91,4 @@ export async function rateLimit(
 
   return { ok, retryAfter }
 }
+

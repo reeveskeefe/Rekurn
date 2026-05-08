@@ -11,7 +11,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
-import { auth } from '../../../../../lib/auth'
+import { getCachedSession } from '../../../../../lib/session-cache'
 import { db, users } from '@rekurn/db'
 import { eq } from 'drizzle-orm'
 
@@ -25,7 +25,7 @@ const UsernameSchema = z
   )
 
 export async function GET(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const rows = await db
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   let body: unknown

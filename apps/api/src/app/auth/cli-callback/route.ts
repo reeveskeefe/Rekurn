@@ -14,7 +14,7 @@
  *   - State is validated by the CLI to prevent CSRF / session fixation.
  */
 import { NextResponse, type NextRequest } from 'next/server'
-import { auth } from '../../../lib/auth'
+import { getCachedSession } from '../../../lib/session-cache'
 
 const ERROR_HTML = (msg: string) => `<!DOCTYPE html>
 <html lang="en">
@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Read session — magic link sets a cookie before redirecting here
-  const session = await auth.api.getSession({ headers: request.headers })
+  const session = await getCachedSession(request.headers)
   if (!session) {
     return new NextResponse(
       ERROR_HTML('Session not found. The magic link may have expired — please try again.'),
