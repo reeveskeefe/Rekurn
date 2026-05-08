@@ -1,6 +1,6 @@
 {
   "name": "@reeveskeefe/rekurn-sdk",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "type": "module",
   "description": "Rekurn TypeScript SDK — build your own UI on top of the Rekurn API.",
   "license": "Apache-2.0",
@@ -34,11 +34,13 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --minify",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {},
   "devDependencies": {
     "tsup": "^8.3.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }

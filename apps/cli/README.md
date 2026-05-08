@@ -3,13 +3,13 @@
 Install globally:
 
 ```bash
-npm install -g rekurn@0.2.5
+npm install -g rekurn@0.2.6
 ```
 
 Or run without installing:
 
 ```bash
-npx rekurn@0.2.5 --help
+npx rekurn@0.2.6 --help
 ```
 
 Rekurn is a self-hosted version control system. There is no central rekurn.com

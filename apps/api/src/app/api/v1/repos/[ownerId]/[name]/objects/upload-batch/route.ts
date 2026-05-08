@@ -10,8 +10,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { getCachedSession } from '../../../../../../../../lib/session-cache'
-import { mapLimit } from '../../../../../../../../lib/concurrency'
-import { storeObject, validateObjectHash } from '../../../../../../../../lib/objects'
+import { storeObjectBatch, validateObjectHash } from '../../../../../../../../lib/objects'
 import {
   requireWriteAccess,
   accessErrorResponse,
@@ -25,7 +24,7 @@ const UploadBatchSchema = z.object({
   objects: z.array(z.object({
     hash: z.string().length(64).regex(/^[0-9a-f]{64}$/),
     data: z.string().max(MAX_DATA_CHARS),
-  })).min(1).max(2_000),
+  })).min(1).max(500),
 })
 
 interface RouteParams {
@@ -89,7 +88,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       decoded.push({ hash: object.hash, bytes })
     }
 
-    await mapLimit(decoded, 8, (object) => storeObject(repo.id, object.hash, object.bytes))
+    await storeObjectBatch(repo.id, decoded)
 
     return NextResponse.json({ ok: true, stored: decoded.length })
   } catch (err) {

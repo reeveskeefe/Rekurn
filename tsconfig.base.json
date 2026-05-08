@@ -12,13 +12,12 @@
     "sourceMap": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "baseUrl": ".",
     "paths": {
-      "@rekurn/core": ["packages/core/src/index.ts"],
-      "@rekurn/crypto": ["packages/crypto/src/index.ts"],
-      "@rekurn/db": ["db/src/index.ts"],
-      "@rekurn/diff": ["packages/diff/src/index.ts"],
-      "@rekurn/types": ["packages/types/src/index.ts"]
+      "@rekurn/core": ["./packages/core/src/index.ts"],
+      "@rekurn/crypto": ["./packages/crypto/src/index.ts"],
+      "@rekurn/db": ["./db/src/index.ts"],
+      "@rekurn/diff": ["./packages/diff/src/index.ts"],
+      "@rekurn/types": ["./packages/types/src/index.ts"]
     },
     "isolatedModules": true,
     "noUnusedLocals": true,

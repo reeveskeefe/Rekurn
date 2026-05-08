@@ -13,6 +13,7 @@ import { put, get } from '@vercel/blob'
 import { db, objects, commits } from '@rekurn/db'
 import { eq, inArray } from 'drizzle-orm'
 import { computeObjectHash, detectObjectType, parseCommit } from '@rekurn/core'
+import { mapLimit } from './concurrency'
 
 // ---------------------------------------------------------------------------
 // Store
@@ -180,6 +181,72 @@ async function storeCommitRecord(
     // Non-fatal: commit metadata is supplementary; the raw bytes are stored.
     console.error('[objects] Failed to parse/store commit record:', err)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Batch store — used by upload-batch route
+// ---------------------------------------------------------------------------
+
+/**
+ * Store multiple objects efficiently:
+ *   1. One inArray SELECT to find which hashes are truly new.
+ *   2. Parallel Blob PUTs for new objects only (concurrency 32).
+ *   3. One batch INSERT for all metadata.
+ *
+ * This replaces the old pattern of N×storeObject calls (each with its own SELECT),
+ * which was the primary bottleneck on Vercel free tier (10 s function limit).
+ */
+export async function storeObjectBatch(
+  repoId: string,
+  items: Array<{ hash: string; bytes: Buffer }>,
+): Promise<void> {
+  if (items.length === 0) return
+
+  // 1. Single existence check across all hashes
+  const existingRows = await db
+    .select({ hash: objects.hash })
+    .from(objects)
+    .where(inArray(objects.hash, items.map((o) => o.hash)))
+  const existingHashes = new Set(existingRows.map((r) => r.hash))
+  const newItems = items.filter((o) => !existingHashes.has(o.hash))
+
+  if (newItems.length === 0) return
+
+  // 2. Parallel Blob PUTs for new objects only
+  const stored = await mapLimit(
+    newItems,
+    32,
+    async (item): Promise<{ hash: string; bytes: Buffer; blobUrl: string; type: string }> => {
+      const type = detectObjectType(item.bytes)
+      const blob = await put(`rekurn/objects/${item.hash}`, item.bytes, {
+        access: 'private',
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+        addRandomSuffix: false,
+      })
+      return { hash: item.hash, bytes: item.bytes, blobUrl: blob.url, type }
+    },
+  )
+
+  // 3. One batch INSERT for all object metadata
+  await db
+    .insert(objects)
+    .values(
+      stored.map((o) => ({
+        hash: o.hash,
+        type: o.type,
+        size: o.bytes.length,
+        repoId,
+        blobUrl: o.blobUrl,
+      })),
+    )
+    .onConflictDoNothing()
+
+  // 4. Commit records (rare per push; run concurrently)
+  await Promise.all(
+    stored
+      .filter((o) => o.type === 'commit')
+      .map((o) => storeCommitRecord(repoId, o.hash, o.bytes)),
+  )
 }
 
 // ---------------------------------------------------------------------------

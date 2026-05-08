@@ -145,7 +145,7 @@ export class RekurnClient {
 
     this.baseUrl = options.baseUrl.replace(/\/$/, '')
     this.token = options.token
-    this.timeoutMs = options.timeoutMs ?? 10_000
+    this.timeoutMs = options.timeoutMs ?? 30_000
     this.retries = options.retries ?? 2
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
@@ -229,6 +229,7 @@ export class RekurnClient {
   async raw(method: string, path: string, body?: unknown): Promise<Response> {
     let lastError: unknown
     for (let attempt = 0; attempt <= this.retries; attempt++) {
+      let retryDelayMs = 150 * 2 ** attempt
       try {
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
@@ -240,13 +241,20 @@ export class RekurnClient {
         })
         clearTimeout(timeout)
 
+        // Renewal-optimal 429 backoff: sleep exactly until the rate-limit window
+        // resets (τ_retry + ε) rather than blind exponential backoff.
+        if (res.status === 429) {
+          const ra = res.headers.get('Retry-After')
+          if (ra != null) retryDelayMs = Number(ra) * 1000 + 50
+        }
+
         if (res.ok) return res
         if (!isRetryable(res.status) || attempt === this.retries) throw await toApiError(res)
       } catch (err) {
         lastError = err
         if (err instanceof RekurnApiError || attempt === this.retries) throw sanitizeError(err)
       }
-      await sleep(150 * 2 ** attempt)
+      await sleep(retryDelayMs)
     }
     throw sanitizeError(lastError)
   }

@@ -11,10 +11,16 @@ import { createHash } from 'node:crypto'
 import type { RemoteInfo } from './remote.js'
 import { mapLimit } from './concurrency.js'
 
-const HASH_CHUNK_SIZE = 5_000
-const MAX_BATCH_REQUEST_BYTES = 25 * 1024 * 1024
+const HASH_CHUNK_SIZE = 5_000        // want negotiation: sending 64-byte hashes only
+const DOWNLOAD_CHUNK_SIZE = 208      // download batches: receiving full object data, bound by T_max = 10s
+// Upload batches: 4 MB ensures the server (Vercel free tier, 10 s limit) can process
+// all objects within budget even at peak. Derived from:
+//   budget=8s, 1 inArray check=100ms, 32-parallel blobs at 200ms each → ~500 objects max
+//   500 objects × avg 8 KB = 4 MB.
+const MAX_BATCH_REQUEST_BYTES = 4 * 1024 * 1024
 const SINGLE_TRANSFER_CONCURRENCY = 6
 const BATCH_DISPATCH_CONCURRENCY = 4
+const FETCH_BATCH_CONCURRENCY = 4    // parallel download chunks per BFS iteration
 const WANT_CHUNK_CONCURRENCY = 3
 
 // Ref names must be heads/<name> or tags/<name> with safe characters only
@@ -430,61 +436,69 @@ export async function fetchObjects(
   let batchSupported = true
 
   while (pending.length > 0) {
-    const hashes: string[] = []
-    while (pending.length > 0 && hashes.length < HASH_CHUNK_SIZE) {
-      const hash = pending.pop()!
-      if (!readObjectFromCache(repoRoot, hash)) hashes.push(hash)
+    // Drain up to FETCH_BATCH_CONCURRENCY chunks and dispatch them in parallel.
+    // Newly discovered hashes from one chunk's results will be picked up on the
+    // next outer iteration — no discovery dependency within a single round.
+    const chunks: string[][] = []
+    while (pending.length > 0 && chunks.length < FETCH_BATCH_CONCURRENCY) {
+      const hashes: string[] = []
+      while (pending.length > 0 && hashes.length < DOWNLOAD_CHUNK_SIZE) {
+        const hash = pending.pop()!
+        if (!readObjectFromCache(repoRoot, hash)) hashes.push(hash)
+      }
+      if (hashes.length > 0) chunks.push(hashes)
     }
 
-    if (hashes.length === 0) {
-      continue
-    }
+    if (chunks.length === 0) continue
 
-    let objects: Map<string, Buffer>
-    if (batchSupported) {
-      try {
-        objects = await downloadObjectsBatch(info, token, hashes)
-      } catch (err) {
-        if (!isUnsupportedEndpoint(err)) throw err
-        batchSupported = false
-        objects = await downloadObjectsIndividually(info, token, hashes)
-      }
-    } else {
-      objects = await downloadObjectsIndividually(info, token, hashes)
-    }
-
-    for (const hash of hashes) {
-      const bytes = objects.get(hash)
-      if (!bytes) {
-        console.warn(`  warn: object ${hash.slice(0, 12)}... not found on remote`)
-        continue
-      }
-
-      // Verify integrity before caching
-      const actual = createHash('sha256').update(bytes).digest('hex')
-      if (actual !== hash) {
-        console.warn(`  warn: object ${hash.slice(0, 12)}... hash mismatch — skipping`)
-        continue
-      }
-
-      writeObjectToCache(repoRoot, hash, bytes)
-      downloaded++
-      onProgress?.(downloaded)
-
-      // Traverse the object graph
-      try {
-        const type = detectObjectType(bytes)
-        if (type === 'commit') {
-          const commit = parseCommit(bytes)
-          enqueue(commit.treeHash, pending, enqueued)
-          for (const parent of commit.parentHashes) enqueue(parent, pending, enqueued)
-        } else if (type === 'tree') {
-          const tree = parseTree(bytes)
-          for (const entry of tree.entries) enqueue(entry.hash, pending, enqueued)
+    const chunkMaps = await Promise.all(
+      chunks.map(async (hashes): Promise<[string[], Map<string, Buffer>]> => {
+        if (batchSupported) {
+          try {
+            return [hashes, await downloadObjectsBatch(info, token, hashes)]
+          } catch (err) {
+            if (!isUnsupportedEndpoint(err)) throw err
+            batchSupported = false
+          }
         }
-        // Blobs: no further traversal needed
-      } catch {
-        // Unknown object type or parse error — skip traversal
+        return [hashes, await downloadObjectsIndividually(info, token, hashes)]
+      }),
+    )
+
+    for (const [hashes, objects] of chunkMaps) {
+      for (const hash of hashes) {
+        const bytes = objects.get(hash)
+        if (!bytes) {
+          console.warn(`  warn: object ${hash.slice(0, 12)}... not found on remote`)
+          continue
+        }
+
+        // Verify integrity before caching
+        const actual = createHash('sha256').update(bytes).digest('hex')
+        if (actual !== hash) {
+          console.warn(`  warn: object ${hash.slice(0, 12)}... hash mismatch — skipping`)
+          continue
+        }
+
+        writeObjectToCache(repoRoot, hash, bytes)
+        downloaded++
+        onProgress?.(downloaded)
+
+        // Traverse the object graph
+        try {
+          const type = detectObjectType(bytes)
+          if (type === 'commit') {
+            const commit = parseCommit(bytes)
+            enqueue(commit.treeHash, pending, enqueued)
+            for (const parent of commit.parentHashes) enqueue(parent, pending, enqueued)
+          } else if (type === 'tree') {
+            const tree = parseTree(bytes)
+            for (const entry of tree.entries) enqueue(entry.hash, pending, enqueued)
+          }
+          // Blobs: no further traversal needed
+        } catch {
+          // Unknown object type or parse error — skip traversal
+        }
       }
     }
   }

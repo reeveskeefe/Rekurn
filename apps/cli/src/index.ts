@@ -34,7 +34,7 @@ const program = new Command()
 program
   .name('rekurn')
   .description('Rekurn — Return to any version instantly.')
-  .version('0.2.5')
+  .version('0.2.6')
 
 // ---------------------------------------------------------------------------
 // rekurn init
