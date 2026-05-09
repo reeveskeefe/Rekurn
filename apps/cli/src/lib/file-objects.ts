@@ -98,11 +98,15 @@ export async function* walkFilePaths(
   for (const entry of entries) {
     const fullPath = join(target, entry.name)
     const rel = relative(repoRoot, fullPath)
-    if (shouldIgnore(rel)) continue
 
+    // For directories, pass both the bare path and the path + '/' so that
+    // patterns like '.next/' or '**/.next/' correctly prune the directory
+    // before we ever recurse into it.
     if (entry.isDirectory()) {
+      if (shouldIgnore(rel) || shouldIgnore(rel + '/')) continue
       yield* walkFilePaths(fullPath, repoRoot, shouldIgnore)
     } else if (entry.isFile()) {
+      if (shouldIgnore(rel)) continue
       yield fullPath
     }
   }
